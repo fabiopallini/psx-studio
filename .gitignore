@@ -1,0 +1,24 @@
+build/
+*.log
+*.core
+core
+.codex
+todo.md
+
+__pycache__/
+*.py[cod]
+
+# Example games are distributed separately in GitHub Releases.
+/examples/
+
+# Local agent state and credentials.
+/.agents/
+/.aws/
+
+# Desktop metadata and temporary editor files.
+.DS_Store
+Thumbs.db
+Desktop.ini
+*~
+*.swp
+*.swo

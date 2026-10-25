@@ -1,0 +1,46 @@
+Define root C:\
+Define LicensePath [root]\CDROM\
+Define LicenseFile LICENSEE.DAT
+Disc CDROMXA_PSX
+    CatalogNumber 0000000000000
+    LeadIn XA
+        Empty 1000
+        PostGap 150
+    EndTrack
+    Track XA
+        Pause 150
+        Volume ISO9660
+            SystemArea [LicensePath][LicenseFile]
+            PrimaryVolume
+                SystemIdentifier "PLAYSTATION"
+                VolumeIdentifier "PSXSTUDIO"
+                VolumeSetIdentifier "PSXSTUDIO"
+                PublisherIdentifier "PSXSTUDIO"
+                DataPreparerIdentifier "PSXSTUDIO"
+                ApplicationIdentifier "PLAYSTATION"
+                LPath
+                OptionalLpath
+                MPath
+                OptionalMpath
+                Hierarchy
+                    XAFileAttributes Form1 Audio
+                    XAVideoAttributes ApplicationSpecific
+                    XAAudioAttributes ADPCM_C Stereo
+                    File SYSTEM.CNF
+                        XAFileAttributes Form1 Data
+                        Source [root]\CDROM\SYSTEM.CNF
+                    EndFile
+                    File MAIN.EXE
+                        XAFileAttributes Form1 Data
+                        Source [root]\SRC\MAIN.EXE
+                    EndFile
+                EndHierarchy
+            EndPrimaryVolume
+        EndVolume
+        Empty 300
+        PostGap 150
+    EndTrack
+    LeadOut XA
+        Empty 150
+    EndTrack
+EndDisc
