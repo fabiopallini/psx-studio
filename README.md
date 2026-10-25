@@ -28,6 +28,8 @@ its models, textures, audio and C modules.
 ## What you need
 
 To build games, supply your own **Psy-Q SDK** and **DOSBox-X or DOSBox**.
+You can download the [Psy-Q SDK archive](https://psx.arthus.net/sdk/Psy-Q/PSYQ_SDK.zip)
+and select the extracted SDK folder in **File → Settings**.
 The SDK folder must contain `psyq/CCPSX.EXE`, `psyq/PSYMAKE.EXE`, `include/`
 and `lib/`. An emulator is optional and can be configured in Settings, for example:
 
