@@ -50,7 +50,21 @@ emulator and keep it together with `cdrom/GAME.ISO`.
 
 Install a C11 compiler, Make, pkg-config, GTK 4.12 or newer, JSON-GLib, libepoxy
 and libpng development packages. The preview requires OpenGL 3.2 or OpenGL ES 3.0.
-From the project folder:
+
+**Ubuntu 24.04 or newer:**
+
+```sh
+sudo apt update
+sudo apt install build-essential pkg-config libgtk-4-dev libjson-glib-dev libepoxy-dev libpng-dev
+```
+
+**Fedora:**
+
+```sh
+sudo dnf install gcc make pkgconf-pkg-config gtk4-devel json-glib-devel libepoxy-devel libpng-devel
+```
+
+Then, from the project folder:
 
 ```sh
 make
