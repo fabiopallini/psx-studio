@@ -101,10 +101,18 @@ Command-line output remains available when captured by scripts and the build log
 
 ## Examples
 
-Example projects, including **Shadow Ops**, are distributed separately through
-this repository's GitHub Releases. Extract the examples archive into the project
-folder to restore `examples/`, then open a `.psx` file from the editor.
-Keep each project's accompanying data folder and guide with it.
+Two ready-made projects are available in the **examples ZIP** attached to this
+repository's **GitHub Releases**. They are not included in the source repository:
+
+- **First Scene** (`first-scene.psx`): a simple two-level example with player
+  movement, a following camera and Scene transitions.
+- **Shadow Ops** (`shadow-ops.psx`): a tactical shooter with enemies, shooting,
+  pickups, gated passages and manual memory-card checkpoints.
+
+Download and extract the ZIP, then use **File → Open** in PSX Studio to select
+either `.psx` project. Keep each project's accompanying `*_psx_data/` folder
+and guide with it. Extracting into the repository folder restores `examples/`
+for the example commands and integration tests in the development guides.
 
 ## Documentation and development
 
