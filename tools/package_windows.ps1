@@ -13,6 +13,9 @@ foreach ($library in @('libEGL.dll', 'libGLESv2.dll')) {
         throw "Missing $library. Install: pacman -S mingw-w64-ucrt-x86_64-angleproject"
     }
 }
+if (!(Test-Path -LiteralPath (Join-Path $Prefix 'bin\gdbus.exe'))) {
+    throw 'Missing gdbus.exe. Install: pacman -S mingw-w64-ucrt-x86_64-glib2'
+}
 $base = [IO.Path]::GetFullPath((Join-Path $root 'build\windows'))
 $output = Join-Path $base 'psx-studio'
 $stage = Join-Path $base '.psx-studio-stage'
@@ -62,6 +65,8 @@ if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -F
 [IO.File]::WriteAllText((Join-Path $stage $marker), "PSX Studio Windows distribution`n")
 Write-Host 'Packaging Windows editor, DLLs and GTK resources (no Python)...'
 Copy-Binary (Join-Path $root 'build\psx-studio.exe')
+# GIO autolaunches this helper from beside libgio; it is not an imported DLL.
+Copy-Binary (Join-Path $Prefix 'bin\gdbus.exe')
 # EGL and GLES are loaded dynamically by GTK/Epoxy, outside the EXE import table.
 Copy-Binary (Join-Path $Prefix 'bin\libEGL.dll')
 Copy-Binary (Join-Path $Prefix 'bin\libGLESv2.dll')
@@ -99,10 +104,18 @@ try {
         & (Join-Path $stage 'check-gl.exe')
         if ($LASTEXITCODE -ne 0) { throw 'Packaged EGL/ANGLE graphics check failed.' }
     } finally { Remove-Item -LiteralPath (Join-Path $stage 'check-gl.exe') -Force }
-    & (Join-Path $stage 'psx-studio.exe') --help | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Packaged EXE failed its load check: $LASTEXITCODE" }
-    & (Join-Path $stage 'psx-studio.exe') --build-ps1 --help | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Native build command failed its load check: $LASTEXITCODE" }
+    # GUI subsystem avoids creating a console when launched from Explorer.
+    $image = [IO.File]::ReadAllBytes((Join-Path $stage 'psx-studio.exe'))
+    $peOffset = [BitConverter]::ToInt32($image, 0x3c)
+    if ([BitConverter]::ToUInt16($image, $peOffset + 92) -ne 2) {
+        throw 'The Windows editor must use the GUI subsystem.'
+    }
+    $help = & (Join-Path $stage 'psx-studio.exe') --help | Out-String
+    if ($LASTEXITCODE -ne 0 -or $help -notmatch '--export') { throw 'Packaged EXE load or captured CLI output check failed.' }
+    $help = & (Join-Path $stage 'psx-studio.exe') --build-ps1 --help | Out-String
+    if ($LASTEXITCODE -ne 0 -or $help -notmatch '--prepare-only') { throw 'Native build captured output check failed.' }
+    & (Join-Path $stage 'gdbus.exe') help | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Packaged GDBus helper failed its load check: $LASTEXITCODE" }
 } finally { $env:PATH = $previousPath }
 Assert-ManagedDirectory $output
 if (Test-Path -LiteralPath $output) { Remove-Item -LiteralPath $output -Recurse -Force }

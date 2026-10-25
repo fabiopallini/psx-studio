@@ -104,3 +104,12 @@ prove a full Psy-Q build or interactive GUI behavior on every target machine.
 
 Physical PS1 hardware and Windows 10 have not been verified. Keep these limits
 separate from Linux/Windows 11 host checks and emulator results.
+
+## Windows console and GDBus packaging check
+
+The Windows package was rebuilt with the editor PE subsystem set to Windows GUI.
+Packaging verified captured editor and native-build help output, and loaded the
+packaged GDBus helper with MSYS2 removed from PATH. The EGL/ANGLE pbuffer shader
+and rendering checks passed. The published package includes gdbus.exe beside
+libgio. No interactive GUI, Psy-Q build or emulator check was performed for this
+linker and packaging change.

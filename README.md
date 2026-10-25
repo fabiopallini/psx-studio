@@ -95,6 +95,10 @@ it and keep the entire folder together. It includes the required libraries;
 recipients do not need MSYS2 or Python. Keep personal projects outside this
 folder, as rebuilding replaces it.
 
+On Windows, double-clicking `psx-studio.exe` opens the editor without a console
+window. The package includes GLib's `gdbus.exe` session helper beside its DLLs.
+Command-line output remains available when captured by scripts and the build log.
+
 ## Examples
 
 Example projects, including **Shadow Ops**, are distributed separately through

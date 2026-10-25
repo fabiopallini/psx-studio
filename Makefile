@@ -1,9 +1,11 @@
 PYTHON ?= python3
 EXEEXT :=
 OBJDIR := build
+APP_LDFLAGS :=
 ifeq ($(OS),Windows_NT)
 EXEEXT := .exe
 OBJDIR := build/windows
+APP_LDFLAGS += -mwindows
 endif
 CC ?= cc
 PKGS = gtk4 json-glib-1.0 epoxy libpng
@@ -22,8 +24,8 @@ $(OBJDIR)/%.o: editor/%.c editor/studio.h | $(OBJDIR)/
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
 $(OBJDIR)/camera.o: runtime/camera.c runtime/camera.h | $(OBJDIR)/
 	$(CC) $(CFLAGS) -c $< -o $@
-build/psx-studio$(EXEEXT): $(OBJECTS)
-	$(CC) $(CFLAGS) $^ $(LDLIBS) -o $@
+build/psx-studio$(EXEEXT): $(OBJECTS) Makefile
+	$(CC) $(CFLAGS) $(LDFLAGS) $(APP_LDFLAGS) $(OBJECTS) $(LDLIBS) -o $@
 build/tests$(EXEEXT): tests/project.c editor/scenes.c editor/project.c editor/export.c editor/assets.c editor/studio.h | $(OBJDIR)/
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/project.c editor/scenes.c editor/project.c editor/export.c editor/assets.c $(LDLIBS) -o $@
 build/windows/check-gl.exe: tools/check_windows_gl.c editor/viewport_shaders.h | $(OBJDIR)/

@@ -66,7 +66,10 @@ commands require a successful build with valid markers and CD files.
 
 Windows packaging includes GTK resources, DLL dependencies and explicit ANGLE
 EGL/GLES libraries. It checks shader rendering and executable loading with MSYS2
-removed from PATH. Examples are packaged separately.
+removed from PATH. The Windows editor links with the GUI subsystem to avoid
+an extra console window; captured CLI/build output is preserved. The GDBus
+session helper ships beside GIO so session-bus autolaunch can find it.
+Examples are packaged separately.
 
 ## Editor and game cameras
 
