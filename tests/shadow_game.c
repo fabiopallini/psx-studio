@@ -323,6 +323,53 @@ static void secured_passages(void)
     assert(scene->pending_scene==2 && player->position[2]>270);assert(studio_scene_apply_change());
     assert(object(scene,42)->solid && object(scene,42)->position[1]==closed);
 }
+static void grenadier_passages(void)
+{
+    PsxScene *scene;
+    PsxObject *guard,*player,*door;
+    PsxObject probe;
+    unsigned int sid,j;
+    int g,shot,step;
+    long closed;
+    for(sid=4;sid<=5;sid++) {
+        scene=studio_scene_load_id(sid);player=object(scene,2);
+        door=object(scene,44);closed=door->position[1];
+        /* Check the authored spawn and complete patrol footprint against real
+         * cover: hiding a live guard inside a wall keeps both gates locked. */
+        for(g=0;g<2;g++) {
+            guard=object(scene,20U+(unsigned int)g);
+            probe=*guard;
+            probe.half_size[0]+=32;probe.half_size[2]+=32;
+            for(j=0;j<scene->count;j++) {
+                PsxObject *wall;
+                wall=&scene->objects[j];
+                if(wall->id>=10 && wall->id<=19 && wall->solid)
+                    assert(!psx_objects_overlap(&probe,wall));
+            }
+        }
+        /* Defeat both guards using actual swept pistol shots, leaving all
+         * walls alive. One kill must keep the gate shut; two must release it. */
+        for(g=0;g<2;g++) {
+            guard=object(scene,20U+(unsigned int)g);
+            player->position[0]=guard->position[0];
+            player->position[2]=guard->position[2]+40;
+            for(shot=0;shot<2;shot++) {
+                aim_fire(scene,4096UL);
+                for(step=0;step<8;step++) psx_scene_update(scene,0);
+            }
+            assert(!guard->alive);
+            if(!g) assert(door->solid && door->position[1]==closed);
+        }
+        for(step=0;step<18;step++) psx_scene_update(scene,0);
+        assert(!door->solid && door->position[1]==closed+72);
+        assert(!object(scene,42)->solid);
+        player->position[0]=220;player->position[2]=-210;
+        for(step=0;step<50 && !scene->pending_scene;step++) psx_scene_update(scene,4096UL);
+        if(sid==4) assert(scene->pending_scene==5);
+        else assert(strstr(scene->hud.message,"MISSION COMPLETE"));
+    }
+}
+
 static void movement_speed(void)
 {
     static const unsigned long directions[8]={4096UL,4096UL|8192UL,8192UL,
@@ -577,7 +624,7 @@ int main(void)
     assert(scene->hud.health==100 && object(scene,20)->alive && object(scene,30)->alive);
     scene->hud.health=0;psx_scene_update(scene,0);assert(strstr(scene->hud.message,"YOU ARE DOWN") && scene->hud.style==PSX_HUD_MENU);
     psx_scene_update(scene,2048UL);assert(studio_scene_apply_change());assert(scene->hud.health==100);
-    cancel_aim();secured_passages();movement_speed();timed_game();grenade_combat();
+    cancel_aim();secured_passages();grenadier_passages();movement_speed();timed_game();grenade_combat();
     /* Existing card sector codes retain their meaning after menu renumbering. */
     for(i=1;i<=2;i++) {
         scene=studio_scene_load_id(1);assert(scene && scene->hud.style==PSX_HUD_MENU);

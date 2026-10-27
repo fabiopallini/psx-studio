@@ -20,7 +20,7 @@ modules; the engine does not depend on Shadow Ops or another example.
 | `pipeline/cdrom/` | CD image tools and boot resources |
 | `tools/` | Windows packaging and optional development asset generators |
 | `tests/` | Host checks for editor/export, runtime and build pipeline |
-| `docs/` | Maintained development guides and verification notes |
+| `docs/` | Development workflow and technical reference guides |
 | `examples/` | Optional projects installed from a separate release archive |
 | `build/` | Generated binaries, logs and game images; ignored by Git |
 
@@ -120,7 +120,8 @@ Ordering-table flags explicitly handle flat backdrop ground, translucent decals,
 backface rejection and emissive effects. Ordinary geometry retains depth sorting;
 there is no general depth buffer. See [module APIs](modules.md) for flag contracts,
 [audio](audio.md) and [textures](textures.md) for formats, and
-[verification](verification.md) for checks and limitations.
+[game development](game-development.md#commands-and-verification) for validation
+procedures and known limitations.
 
 The application version is `STUDIO_APP_VERSION` in `editor/studio.h`; the title
 shows it beside the application name. `STUDIO_VERSION` independently identifies

@@ -126,7 +126,7 @@ the release's game guide rather than duplicating them across engine documentatio
 
 Run from `psx-studio/`. No installation is needed if dependencies are present.
 On Windows, follow the [Windows setup](../README.md#windows-11), then use
-`.\build.ps1` for the editor. To build a game:
+`.\build.ps1` for the editor and `.\build.ps1 test` for host tests. To build a game:
 
 ```powershell
 .\build.ps1 -Project examples/shadow-ops.psx -Psyq 'C:\SDK\psyq'
@@ -146,6 +146,12 @@ make test
 ./build/psx-studio --export examples/shadow-ops.psx --output build/shadow-export
 ```
 
+Host tests cover project persistence/validation, asset import/export, audio,
+C89 runtime/camera math, input, timing, frame ownership, checkpoints and build
+preparation/validation. Pipeline tests need Python; production builds do not.
+Example tests skip when the separate archive is absent; report those skips.
+Host tests do not prove SDK compilation, emulator behavior or physical hardware.
+
 `tests/shadow_game.c` covers movement/aiming, cover, bullets, damage, pickups,
 guard kills, gates, extraction/restart and equivalent gameplay at different render
 cadences. Adapt scenario assertions when intentionally changing layouts/rules;
@@ -156,9 +162,10 @@ machine-specific path into source. CLI overrides do not rewrite project settings
 
 ```sh
 ./build/psx-studio --build-ps1 --project examples/shadow-ops.psx --psyq "$PSX_TASK_SDK"
+./build/psx-studio --build-ps1 --verify build/ps1/shadow-ops
 ```
 
-The command above starts DOSBox and needs a display. For automated execution,
+The build command starts DOSBox and needs a display. For automated execution,
 run it with the isolated-display rules in AGENTS.md. Output defaults to
 `build/ps1/PROJECT/`, using the sanitized `.psx` stem. Editor builds always use
 this location and expose no output setting. CLI `--output-root` and legacy custom
@@ -168,6 +175,7 @@ or `build/last-ps1-build.txt`, and check its project marker before using it.
 Console source/header filenames must remain DOS 8.3-compatible (for example,
 `card.c` and `save.h`); a host build does not catch long-name failures in Psy-Q.
 The CD is `cdrom/game.cue` plus `cdrom/GAME.ISO`; keep them together.
+`--verify` checks the PS-X EXE header and CD contents.
 `src/BUILD.LOG`, `dosbox.log` and `texture.log` hold build evidence.
 `build-info.json` records the SDK used; these ignored files may be absent in a
 fresh checkout. An empty `.psx` SDK field does not prevent a CLI override build.
@@ -187,17 +195,19 @@ xvfb-run -a -s "-screen 0 1280x1024x24" env -u WAYLAND_DISPLAY -u WAYLAND_SOCKET
   --smoke-test build/shadow-preview.png
 ```
 
-The smoke command saves a static preview and exits; it does not play the game.
-In the current GTK build it can emit widget assertions during window teardown
-although the PNG is saved and the exit code is zero. Record stderr as well as
-exit status; this remains an editor teardown issue to investigate, not evidence
-of a clean GUI regression check.
+The smoke command saves a static preview and exits; it does not exercise
+interactive UI or gameplay. For editor changes, also check relevant selection,
+imports, camera controls, save/reopen and build messages. Inspect stderr as well
+as exit status; see the known limitations below.
 
 For gameplay checks use `pcsxr -cdfile /actual/output/cdrom/game.cue` on an
 isolated display, with the same Wayland/X11 isolation and a disposable emulator
 profile (keep the user's BIOS/configuration intact). Exercise movement, aiming,
 firing, damage, pickups, camera follow, both directions of Scene travel and
-restart. Stop owned GUI/Xvfb processes afterward. Do not open the user's desktop
+restart, including gates and loading/save prompts. Identify any debugger/RAM
+setup and distinguish it from a natural playthrough. Dummy audio checks do not
+verify the audible mix; checkpoint encoding tests do not verify memory-card I/O.
+Stop owned GUI/Xvfb processes afterward. Do not open the user's desktop
 or file manager for automated checks. For DOSBox Staging also use the temporary
 software-texture configuration described in AGENTS.md and disable primary/local
 configuration loading; Xvfb alone is insufficient.
@@ -208,7 +218,30 @@ GPU/video polling stays nonblocking. Do not reintroduce a blocking VSync main lo
 or solve a graphical slowdown by slowing input/gameplay. Measure FPS during
 movement and combat after geometry or logic changes. It counts presented images,
 not input updates; historical emulator samples are not a guaranteed minimum.
-Keep reproducible evidence and limitations in [verification.md](verification.md).
+Use consistent emulator settings and avoid concurrent compilation when measuring
+FPS. `tools/prepare_shadow_benchmark.py` prepares a disposable Shadow Ops
+comparison copy. Enter through New Game and discard carried-over menu/Scene
+samples and the final stationary period. If console output is unavailable,
+inspect the existing `PsxFrameRate` counter through the emulator debugger.
+
+When the optional viewer is installed, open `examples/3d-viewer/index.html` with
+`file://` and networking disabled; check local OBJ/PNG import, playback and pose
+order after changing its code or embedded assets.
+
+Report commands, results, skips and limitations in the task or PR. Update these
+instructions only when procedures or known limitations change; do not append a
+development diary.
+
+### Known limitations
+
+- Linux editor smoke checks can emit GTK teardown assertions despite saving a
+  PNG and exiting zero. This remains an unresolved GUI issue.
+- Shadow Ops industrial sectors do not sustain 30 FPS in the tested PCSX-R
+  setup; see the example guide for measurements. Direct-to-gameplay diagnostic
+  launches have stalled there, while the normal New Game path worked.
+- Earlier Windows 11 packaging/ANGLE checks do not establish current interactive
+  GUI, SDK or emulator compatibility. Physical PS1 hardware and Windows 10 remain
+  unverified. Emulator FPS is not a physical-console performance guarantee.
 
 ## Starting another game
 

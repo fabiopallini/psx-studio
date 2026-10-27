@@ -6,7 +6,7 @@
   [docs/architecture.md](docs/architecture.md) for component boundaries,
   [docs/modules.md](docs/modules.md) for gameplay APIs, and the audio/texture
   guides when changing asset handling. Current source and validators take
-  precedence over historical verification notes.
+  precedence over documentation summaries.
 - The desktop editor is C11 with GTK4, JSON-GLib, Epoxy and libpng. Keep UI text
   and documentation in English, preserving the Windows 95/98 visual style.
 - `editor/build.c` implements the native PS1 build pipeline on Linux and Windows;
@@ -36,8 +36,10 @@
   and inspect it in an emulator when those external tools are available. A host
   test does not prove console compatibility or performance.
 - Keep reusable implementation guidance in `docs/` and update it when contracts
-  change. `docs/verification.md` records what was actually checked; distinguish
-  code review, host tests, real SDK builds and emulator observations.
+  change. Validation procedures and known limitations belong in
+  `docs/game-development.md`; do not maintain a per-task activity log. Report
+  checks, skips and failures in the task or PR, distinguishing code review,
+  host tests, real SDK builds and emulator observations.
 
 ## Continuing or creating games
 

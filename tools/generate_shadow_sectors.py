@@ -77,7 +77,7 @@ def generate():
             if o['id']==1:o['name']=name+' ground'
             if o['id']==2:o['position']=[-220,20,180]
             if o['id']==20:o['position']=[-160,20,-90];o['rotation']=[0,180,0]
-            if o['id']==21:o['position']=[160,20,-150];o['rotation']=[0,180,0]
+            if o['id']==21:o['position']=[230,20,-85];o['rotation']=[0,180,0]
         def add(id,name,asset,pos,scale=(1,1,1),texture='industry.png'):
             o=copy.deepcopy(template);o.update(id=id,name=name,asset=asset,position=list(pos),scale=list(scale),texture=texture,solid=False,bounds=[1,1,1],module='',target_scene=0);objects.append(o)
         add(79,'Guard grenade throw pose','gthrow.obj',(0,-1000,0),(1.25,)*3,'actors.png')
