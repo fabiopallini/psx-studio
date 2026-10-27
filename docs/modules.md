@@ -224,7 +224,8 @@ Health-only and combat styles suppress diagnostic text and the FPS overlay;
 style 0 retains the standard text/status display.
 
 The initial checkpoint backend is for Shadow Ops sector starts: set
-`scene->checkpoint.operation` to `PSX_CHECKPOINT_SAVE` with `scene_id` 1 or 2,
+`scene->checkpoint.operation` to `PSX_CHECKPOINT_SAVE` with legacy sector code `scene_id` 1 (yard) or 2 (warehouse),
+independent of their current Scene IDs; the game maps these to Scenes 2/3,
 or `PSX_CHECKPOINT_LOAD`. The console handles the request at GPU idle in the
 main thread, clears operation and returns status 1/-1; a successful load supplies
 the stored Scene ID. The module validates it and requests a normal Scene change.

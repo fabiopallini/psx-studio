@@ -31,6 +31,31 @@ static void fixed_clipping(void)
     a[0]=0;b[0]=319;assert(psx_camera_clip_line_fixed(a,b,0,0,1));
 }
 
+static void conservative_bounds(void)
+{
+    long center[3],point[3],screen[3];
+    int projection,x,y,z,corner,k;
+    for(projection=0;projection<=1;projection++)
+    for(x=-600;x<=600;x+=100) for(y=-500;y<=500;y+=100)
+    for(z=-100;z<=1000;z+=50) {
+        center[0]=x;center[1]=y;center[2]=z;
+        if(!psx_camera_bounds_outside_fixed(projection,5636,center,70)) continue;
+        /* Rejection must exclude every corner of an inscribed box, including
+         * bounds close to the near plane and viewport borders. */
+        for(corner=0;corner<8;corner++) {
+            for(k=0;k<3;k++) point[k]=center[k]+((corner&(1<<k))?40:-40);
+            if(psx_camera_project_fixed(projection,5636,point,screen))
+                assert(screen[0]<-160 || screen[0]>159 || screen[1]<-128 || screen[1]>127);
+        }
+    }
+    center[0]=0;center[1]=0;center[2]=50;
+    assert(!psx_camera_bounds_outside_fixed(1,4096,center,70));
+    assert(!psx_camera_bounds_outside_fixed(1,16384,center,70));
+    assert(!psx_camera_bounds_outside_fixed(1,4096,center,32768));
+    center[0]=2000;center[2]=600;
+    assert(psx_camera_bounds_outside_fixed(1,4096,center,70));
+}
+
 static void fixed_rotation(void)
 {
     const long angles[4][4]={{4096,0,4096,0},{0,4096,4096,0},
@@ -63,7 +88,7 @@ int main(void)
     double a[3]={0,0,16},b[3]={60,30,64};
     long fixed_view[3]={40,20,300},fixed_screen[3];
     int mode,count,i,axis,side;
-    fixed_clipping();fixed_rotation();
+    fixed_clipping();fixed_rotation();conservative_bounds();
     c.center[0]=11;c.center[1]=27;c.center[2]=-13;
     c.cy=.8;c.sy=.6;c.cp=.8;c.sp=.6;c.zoom=.9;
     world[0]=100;world[1]=20;world[2]=80;

@@ -16,7 +16,7 @@ static PsxObject *object(PsxScene *scene,unsigned int id)
     for(i=0;i<scene->count;i++) if(scene->objects[i].id==id) return &scene->objects[i];
     assert(0);return 0;
 }
-static void reset(void) {assert(studio_scene_load_id(1));}
+static void reset(void) {assert(studio_scene_load_id(2));}
 static void at(PsxObject *a,const PsxObject *b)
 {
     a->position[0]=b->position[0];a->position[2]=b->position[2];
@@ -44,7 +44,7 @@ static void visual_feedback(void)
     PsxObject *player,*guard,*slice,*wall;
     long full_scale;
     int i,before;
-    reset();scene=studio_scene_load_id(1);player=object(scene,2);guard=object(scene,20);
+    reset();scene=studio_scene_load_id(2);player=object(scene,2);guard=object(scene,20);
     remove_walls(scene);object(scene,21)->alive=0;object(scene,50)->alive=0;
     scene->play_sound=record_sound;scene->play_music=record_music;before=enemy_sounds;
     player->position[0]=guard->position[0];player->position[2]=guard->position[2]-100;
@@ -95,12 +95,12 @@ static void action_feedback(void)
     const unsigned char *shared_audio;
     PsxSound *bank;
     int i,before;
-    reset();scene=studio_scene_load_id(1);player=object(scene,2);rest=player->mesh;
+    reset();scene=studio_scene_load_id(2);player=object(scene,2);rest=player->mesh;
     character_volume(rest);character_volume(object(scene,20)->mesh);
     shared_vertices=rest->vertices;shared_audio=scene->sounds[0].data;bank=scene->sounds;
     assert(object(scene,20)->mesh->vertices==object(scene,21)->mesh->vertices);
     assert(object(scene,65)->mesh->vertices!=shared_vertices);
-    assert(studio_scene_load_id(2)==scene);
+    assert(studio_scene_load_id(3)==scene);
     assert(object(scene,2)->mesh->vertices==shared_vertices && scene->sounds[0].data==shared_audio);
     assert(scene->sounds!=bank); /* Immutable bytes shared, mutable banks separate. */
     reset();player=object(scene,2);rest=player->mesh;
@@ -135,7 +135,7 @@ static void running(void)
     PsxObject *player,*wall;
     const PsxMesh *rest;
     int i,seen;
-    reset();scene=studio_scene_load_id(1);player=object(scene,2);rest=player->mesh;
+    reset();scene=studio_scene_load_id(2);player=object(scene,2);rest=player->mesh;
     remove_walls(scene);object(scene,20)->alive=object(scene,21)->alive=0;
     object(scene,50)->alive=0;
     psx_scene_update(scene,8192UL);assert(player->mesh==object(scene,70)->mesh);
@@ -175,7 +175,7 @@ static void stealth(void)
     PsxObject *player,*guard,*wall;
     int i,before;
     long x,z;
-    reset();scene=studio_scene_load_id(1);player=object(scene,2);guard=object(scene,20);
+    reset();scene=studio_scene_load_id(2);player=object(scene,2);guard=object(scene,20);
     remove_walls(scene);
     object(scene,21)->alive=0;object(scene,50)->alive=0;
     scene->play_sound=record_sound;before=enemy_sounds;
@@ -207,7 +207,7 @@ static void pistol_hit_reaction(void)
     PsxScene *scene;
     PsxObject *player,*guard;
     int i;
-    reset();scene=studio_scene_load_id(1);player=object(scene,2);guard=object(scene,20);
+    reset();scene=studio_scene_load_id(2);player=object(scene,2);guard=object(scene,20);
     remove_walls(scene);object(scene,21)->alive=object(scene,50)->alive=0;
     player->position[0]=guard->position[0];player->position[2]=guard->position[2]-100;
     player->rotation[1]=2048;scene->play_sound=record_sound;enemy_sounds=0;
@@ -231,7 +231,7 @@ static void controls(void)
     PsxObject *player;
     long x,z,angle;
     int i;
-    scene=studio_scene_load_id(1);player=object(scene,2);scene->play_sound=record_sound;
+    scene=studio_scene_load_id(2);player=object(scene,2);scene->play_sound=record_sound;
     object(scene,20)->alive=0;object(scene,21)->alive=0;
     x=player->position[0];z=player->position[2];
     for(i=0;i<50;i++) psx_scene_update(scene,128UL);
@@ -277,7 +277,7 @@ static void cancel_aim(void)
     const PsxMesh *rest;
     long x;
     int i;
-    scene=studio_scene_load_id(1);player=object(scene,2);rest=player->mesh;
+    scene=studio_scene_load_id(2);player=object(scene,2);rest=player->mesh;
     object(scene,20)->alive=object(scene,21)->alive=object(scene,50)->alive=0;
     scene->play_sound=record_sound;player_sounds=0;
     psx_scene_update(scene,128UL);assert(player->mesh==object(scene,65)->mesh);
@@ -304,7 +304,7 @@ static void secured_passages(void)
     PsxObject *player,*door;
     long closed;
     int i;
-    scene=studio_scene_load_id(1);player=object(scene,2);door=object(scene,42);closed=door->position[1];
+    scene=studio_scene_load_id(2);player=object(scene,2);door=object(scene,42);closed=door->position[1];
     assert(door->alive && door->solid && !object(scene,40)->alive);
     player->position[0]=220;player->position[2]=-200;
     for(i=0;i<40;i++) psx_scene_update(scene,4096UL);
@@ -314,13 +314,13 @@ static void secured_passages(void)
     for(i=0;i<18;i++) psx_scene_update(scene,0);
     assert(!door->solid && door->alive && door->position[1]==closed+72 && !scene->pending_scene);
     for(i=0;i<40 && !scene->pending_scene;i++) psx_scene_update(scene,4096UL);
-    assert(scene->pending_scene==2 && player->position[2]<-270);assert(studio_scene_apply_change());
+    assert(scene->pending_scene==3 && player->position[2]<-270);assert(studio_scene_apply_change());
     assert(object(scene,42)->solid && object(scene,44)->solid);
     player=object(scene,2);object(scene,50)->alive=0;player->position[0]=-220;player->position[2]=200;
     object(scene,20)->alive=object(scene,21)->alive=0;
     for(i=0;i<18;i++) psx_scene_update(scene,0);
     for(i=0;i<45 && !scene->pending_scene;i++) psx_scene_update(scene,16384UL);
-    assert(scene->pending_scene==1 && player->position[2]>270);assert(studio_scene_apply_change());
+    assert(scene->pending_scene==2 && player->position[2]>270);assert(studio_scene_apply_change());
     assert(object(scene,42)->solid && object(scene,42)->position[1]==closed);
 }
 static void movement_speed(void)
@@ -334,7 +334,7 @@ static void movement_speed(void)
     /* One second in open space: both controller types travel about 100 units
      * in every direction, with less than two units of integer rounding. */
     for(mode=0;mode<2;mode++) for(d=0;d<8;d++) {
-        scene=studio_scene_load_id(1);player=object(scene,2);remove_walls(scene);
+        scene=studio_scene_load_id(2);player=object(scene,2);remove_walls(scene);
         object(scene,20)->alive=object(scene,21)->alive=object(scene,50)->alive=0;
         player->position[0]=player->position[2]=1000;
         if(mode) analog(scene,(directions[d]&8192UL)?127:(directions[d]&32768UL)?-127:0,
@@ -359,7 +359,7 @@ static void timed_game(void)
     /* Two real seconds at 50 FPS, 25 FPS and uneven render intervals must
      * produce identical movement, firing cooldowns, bullets and guard state. */
     for(mode=0;mode<3;mode++) {
-        scene=studio_scene_load_id(1);assert(scene);initial_x=object(scene,2)->position[0];
+        scene=studio_scene_load_id(2);assert(scene);initial_x=object(scene,2)->position[0];
         assert(scene->count<=72);psx_step_clock_reset(&clock,0);now=0;frame=0;updates=0;
         while(now<100) {
             delta=mode==0?1:mode==1?2:irregular[frame%5];frame++;
@@ -385,6 +385,87 @@ static void timed_game(void)
         }
     }
 }
+static void grenade_combat(void)
+{
+    PsxScene *scene;
+    PsxObject *player,*guard,*n,*wall;
+    int i,mode,health,found;
+    long x,z;
+    /* Direct hit, evasion and a wall inserted between landing and player.
+     * Disable bullet visuals so blast damage is observed in isolation. */
+    for(mode=0;mode<4;mode++) {
+        scene=studio_scene_load_id(4);player=object(scene,2);guard=object(scene,20);
+        remove_walls(scene);object(scene,21)->alive=0;
+        player->position[0]=0;player->position[2]=0;
+        guard->position[0]=0;guard->position[2]=-140;guard->rotation[1]=2048;
+        for(i=100;i<112;i++) object(scene,(unsigned int)i)->half_size[0]=0;
+        found=0;
+        for(i=0;i<90;i++) {
+            psx_scene_update(scene,0);
+            if(object(scene,160)->alive) {found=1;break;}
+        }
+        assert(found && guard->mesh==object(scene,79)->mesh && object(scene,164)->alive);
+        n=object(scene,160);x=player->position[0];z=player->position[2];
+        guard->alive=0;
+        /* Drain the already-fired bullets, then restore health and wait for impact. */
+        if(mode==1) player->position[0]=100;
+        if(mode==2) {
+            player->position[0]=40;
+            wall=object(scene,10);wall->alive=wall->solid=1;
+            wall->position[0]=20;wall->position[2]=0;
+            wall->half_size[0]=2;wall->half_size[2]=80;
+        }
+        if(mode==3) {
+            wall=object(scene,10);wall->alive=wall->solid=1;
+            wall->position[0]=0;wall->position[2]=-70;
+            wall->half_size[0]=80;wall->half_size[2]=2;
+        }
+        health=0;
+        for(i=0;i<45;i++) {
+            scene->hud.health=100;
+            psx_scene_update(scene,0);
+            if(!n->alive) {health=scene->hud.health;break;}
+        }
+        assert(i<45 && object(scene,162)->alive && n->position[1]<=3 && !object(scene,164)->alive);
+        assert(n->position[0]>=x-2 && n->position[0]<=x+2);
+        if(mode==3) assert(n->position[2]<-70);
+        else assert(n->position[2]>=z-8 && n->position[2]<=z+8);
+        if(mode) assert(health==100);else assert(health==65);
+        for(i=0;i<12;i++) psx_scene_update(scene,0);
+        assert(!object(scene,162)->alive);
+    }
+    /* Rendering at 50 Hz or in uneven batches must produce identical combat. */
+    {
+        PsxObject reference[96];
+        unsigned int count,j,k,step,total,batch;
+        static const unsigned int cadence[4]={1,3,2,4};
+        int reference_health;
+        reference_health=0;count=0;
+        for(mode=0;mode<2;mode++) {
+            scene=studio_scene_load_id(4);remove_walls(scene);player=object(scene,2);
+            player->position[0]=0;player->position[2]=0;
+            guard=object(scene,20);guard->position[0]=0;guard->position[2]=-140;guard->rotation[1]=2048;
+            object(scene,21)->alive=0;total=0;j=0;
+            while(total<130) {
+                batch=mode?cadence[j++%4]:1;
+                if(total+batch>130) batch=130-total;
+                for(step=0;step<batch;step++) {psx_scene_update(scene,0);total++;}
+            }
+            if(!mode) {
+                count=scene->count;assert(count<=96);
+                memcpy(reference,scene->objects,count*sizeof(PsxObject));reference_health=scene->hud.health;
+            } else {
+                assert(scene->count==count && scene->hud.health==reference_health);
+                for(j=0;j<count;j++) {
+                    assert(scene->objects[j].alive==reference[j].alive && scene->objects[j].mesh==reference[j].mesh);
+                    for(k=0;k<3;k++) assert(scene->objects[j].position[k]==reference[j].position[k]);
+                }
+            }
+        }
+    }
+    /* Scene reload resets active flight/effects; prior sectors have no grenades. */
+    scene=studio_scene_load_id(4);assert(!object(scene,160)->alive && !object(scene,162)->alive);
+}
 int main(void)
 {
     PsxScene *scene;
@@ -397,16 +478,16 @@ int main(void)
     visual_feedback();action_feedback();running();stealth();pistol_hit_reaction();controls();
     scene=studio_scene_load();assert(!scene->sound_count && !scene->play_sound);
 
-    assert(scene->scene_id==3 && scene->hud.style==PSX_HUD_MENU);
+    assert(scene->scene_id==1 && scene->hud.style==PSX_HUD_MENU);
     psx_scene_update(scene,16384UL);psx_scene_update(scene,0);psx_scene_update(scene,64UL);
     assert(scene->checkpoint.operation==PSX_CHECKPOINT_LOAD);
     scene->checkpoint.operation=0;scene->checkpoint.status=-1;psx_scene_update(scene,0);
     assert(strstr(scene->hud.message,"NO VALID CHECKPOINT"));
     psx_scene_update(scene,64UL);psx_scene_update(scene,0);psx_scene_update(scene,4096UL);
     psx_scene_update(scene,0);psx_scene_update(scene,64UL);
-    assert(scene->pending_scene==1 && !scene->checkpoint.operation);
+    assert(scene->pending_scene==2 && !scene->checkpoint.operation);
     assert(studio_scene_apply_change());player=object(scene,2);
-    assert(scene->scene_id==1 && scene->hud.enabled && scene->hud.health==100 && scene->hud.ammo==36);
+    assert(scene->scene_id==2 && scene->hud.enabled && scene->hud.health==100 && scene->hud.ammo==36);
     assert(object(scene,1)->render_flags==PSX_RENDER_BACKGROUND && player->render_flags==PSX_RENDER_CULL_BACKFACES);
     assert(object(scene,10)->render_flags==PSX_RENDER_CULL_BACKFACES);
     assert(scene->projection==1 && object(scene,200)->follow_target==2);
@@ -474,25 +555,40 @@ int main(void)
     assert(!object(scene,20)->alive); /* Two player hits kill a guard. */
     for(i=0;i<18;i++) psx_scene_update(scene,0);
     player=object(scene,2);at(player,object(scene,40));psx_scene_update(scene,0);
-    assert(scene->pending_scene==2);assert(studio_scene_apply_change());
-    assert(scene->scene_id==2 && scene->hud.health==100 && scene->hud.ammo==36);
+    assert(scene->pending_scene==3);assert(studio_scene_apply_change());
+    assert(scene->scene_id==3 && scene->hud.health==100 && scene->hud.ammo==36);
     player=object(scene,2);at(player,object(scene,41));psx_scene_update(scene,0);
     assert(!object(scene,40)->alive && !object(scene,41)->alive && !scene->pending_scene);
     psx_object_kill(object(scene,20));psx_scene_update(scene,0);
     assert(!object(scene,40)->alive && !object(scene,41)->alive);
     psx_object_kill(object(scene,20));psx_object_kill(object(scene,21));psx_scene_update(scene,0);
     for(i=0;i<18;i++) psx_scene_update(scene,0);
+    assert(scene->pending_scene==4);assert(studio_scene_apply_change());
+    assert(scene->scene_id==4 && object(scene,160) && object(scene,79));
+    object(scene,20)->alive=object(scene,21)->alive=0;
+    for(i=0;i<18;i++) psx_scene_update(scene,0);
+    at(object(scene,2),object(scene,41));psx_scene_update(scene,0);
+    assert(scene->pending_scene==5);assert(studio_scene_apply_change());
+    object(scene,20)->alive=object(scene,21)->alive=0;
+    for(i=0;i<18;i++) psx_scene_update(scene,0);
+    at(object(scene,2),object(scene,41));psx_scene_update(scene,0);
     assert(strstr(scene->hud.message,"MISSION COMPLETE") && scene->hud.style==PSX_HUD_MENU);
-    psx_scene_update(scene,2048UL);assert(scene->pending_scene==2);assert(studio_scene_apply_change());
+    psx_scene_update(scene,2048UL);assert(scene->pending_scene==5);assert(studio_scene_apply_change());
     assert(scene->hud.health==100 && object(scene,20)->alive && object(scene,30)->alive);
     scene->hud.health=0;psx_scene_update(scene,0);assert(strstr(scene->hud.message,"YOU ARE DOWN") && scene->hud.style==PSX_HUD_MENU);
     psx_scene_update(scene,2048UL);assert(studio_scene_apply_change());assert(scene->hud.health==100);
-    cancel_aim();secured_passages();movement_speed();timed_game();
-    scene=studio_scene_load_id(3);assert(scene && scene->hud.style==PSX_HUD_MENU);
-    psx_scene_update(scene,16384UL);psx_scene_update(scene,0);psx_scene_update(scene,64UL);
-    assert(scene->checkpoint.operation==PSX_CHECKPOINT_LOAD);
-    scene->checkpoint.operation=0;scene->checkpoint.status=1;scene->checkpoint.scene_id=2;
-    psx_scene_update(scene,0);assert(scene->pending_scene==2);assert(studio_scene_apply_change());
-    assert(scene->scene_id==2 && scene->hud.style==PSX_HUD_COMBAT && !scene->checkpoint.operation);
+    cancel_aim();secured_passages();movement_speed();timed_game();grenade_combat();
+    /* Existing card sector codes retain their meaning after menu renumbering. */
+    for(i=1;i<=2;i++) {
+        scene=studio_scene_load_id(1);assert(scene && scene->hud.style==PSX_HUD_MENU);
+        psx_scene_update(scene,16384UL);psx_scene_update(scene,0);psx_scene_update(scene,64UL);
+        assert(scene->checkpoint.operation==PSX_CHECKPOINT_LOAD);
+        scene->checkpoint.operation=0;scene->checkpoint.status=1;scene->checkpoint.scene_id=(unsigned int)i;
+        psx_scene_update(scene,0);assert(scene->pending_scene==(unsigned int)(i+1));assert(studio_scene_apply_change());
+        assert(scene->scene_id==(unsigned int)(i+1) && scene->hud.style==PSX_HUD_COMBAT && !scene->checkpoint.operation);
+    }
+    player=object(scene,2);at(player,object(scene,50));psx_scene_update(scene,0);
+    psx_scene_update(scene,4096UL);psx_scene_update(scene,0);psx_scene_update(scene,64UL);
+    assert(scene->checkpoint.operation==PSX_CHECKPOINT_SAVE && scene->checkpoint.scene_id==2);
     return 0;
 }

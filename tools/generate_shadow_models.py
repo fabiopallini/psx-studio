@@ -64,7 +64,7 @@ def box(mesh, lower, upper, uv, cap=True, front=None, transform=lambda p:p, top_
         mesh.face([transform(p) for p in face],face_uv,inside=transform(((x+X)/2,(y+Y)/2,(z+Z)/2)))
 
 
-def bone(mesh, a, b, radius, uv, end=False, transform=lambda p:p, sides=4):
+def bone(mesh, a, b, radius, uv, end=False, transform=lambda p:p, sides=4, taper=1):
     # Low-sided sleeve/trouser section; no hidden internal caps.
     direction = [b[i]-a[i] for i in range(3)]
     length = math.sqrt(sum(v*v for v in direction))
@@ -75,9 +75,9 @@ def bone(mesh, a, b, radius, uv, end=False, transform=lambda p:p, sides=4):
     other = [direction[1]*side[2]-direction[2]*side[1],
              direction[2]*side[0]-direction[0]*side[2],
              direction[0]*side[1]-direction[1]*side[0]]
-    rings = [[tuple(p[i]+radius*(s*side[i]+t*other[i]) for i in range(3))
+    rings = [[tuple(p[i]+radius*(taper if ring else 1)*(s*side[i]+t*other[i]) for i in range(3))
               for s,t in ([(-1,-1),(1,-1),(1,1),(-1,1)] if sides==4 else
-                         [(math.cos(i*2*math.pi/3),math.sin(i*2*math.pi/3)) for i in range(3)])] for p in (a,b)]
+                         [(math.cos(i*2*math.pi/sides),math.sin(i*2*math.pi/sides)) for i in range(sides)])] for ring,p in enumerate((a,b))]
     for i in range(sides):
         j=(i+1)%sides;mesh.face([transform(p) for p in [rings[0][i],rings[0][j],rings[1][j],rings[1][i]]],[uv[3],uv[2],uv[1],uv[0]] if isinstance(uv[0],tuple) else uv,inside=transform(tuple((a[k]+b[k])/2 for k in range(3))))
     if end:mesh.face([transform(p) for p in rings[1]],(80,118),inside=transform(tuple((a[k]+b[k])/2 for k in range(3))))
@@ -100,47 +100,55 @@ def character(name, guard=False, pose='rest'):
         a=math.radians(twist);x,z=x*math.cos(a)+z*math.sin(a),z*math.cos(a)-x*math.sin(a)
         a=math.radians(lean);y,z=y*math.cos(a)-z*math.sin(a),y*math.sin(a)+z*math.cos(a)
         return (x,y+(1 if run and not stride else 0),z)
-    # Broad shoulders, medium stylized head: detail comes from mapped fabric.
-    lower=[(-4,-2,-3),(4,-2,-3),(4,-2,3),(-4,-2,3)]
-    top=[(-6,13,-4),(6,13,-4),(6.5,11.5,4),(-6.5,11.5,4)]
-    for i in range(4):
-        j=(i+1)%4
+    # Bevelled vest and sloping shoulders, with a narrower waist. The same
+    # connected silhouette is retained in every immutable animation pose.
+    profile=[(-3.8,-1),(3.8,-1),(5,-.55),(5,.55),(3.8,1),(-3.8,1),(-5,.55),(-5,-.55)]
+    lower=[(x*.8,-2,z*3) for x,z in profile]
+    top=[(x*1.22,11.5 if abs(x)>4 else 13,z*3.8) for x,z in profile]
+    for i in range(len(top)):
+        j=(i+1)%len(top)
         m.face([upper(p) for p in [lower[i],lower[j],top[j],top[i]]],
-               chest if i==0 else back if i==2 else shade,inside=upper((0,5,0)))
-    m.face([upper(p) for p in top],tile(1,3),inside=upper((0,5,0)))
+               chest if i==0 else back if i==4 else shade,inside=upper((0,5,0)))
+    m.face([upper(p) for p in top],(76,70) if guard else (12,70),inside=upper((0,5,0)))
+    bone(m,(0,12,0),(0,16,0),1.9,(110,53) if guard else (46,53),transform=upper,sides=5)
     for side in [-1,1]:
         x=side*3;step=side*stride*6 if run else 0
         lifted=run and side*stride>0
         foot_y=-10 if lifted else -15 if run and not stride else -16
         knee_z=-1 if lifted else step*0.7-1
-        centres=[(x,-2,0),(x,-6 if lifted else -9,knee_z),(x,foot_y,step)]
-        # Three-sided, joined hip/knee/ankle rings give a bent silhouette
-        # without intersecting boxes or a separate high-detail boot mesh.
-        # Broader trouser legs and a wider, forward-projecting boot silhouette.
-        # Reuse the ankle ring: no additional geometry or lower ground contact.
-        profiles=[ [(-2.5,-2.5),(2.5,-2.5),(0,2.5)],
-                   [(-2.5,-2.5),(2.5,-2.5),(0,2.5)],
-                   [(-3,-4),(3,-4),(0,3)] ]
-        rings=[[(cx+dx,cy,cz+dz) for dx,dz in profile]
-               for (cx,cy,cz),profile in zip(centres,profiles)]
+        centres=[(x,-2,0),(x,-6 if lifted else -9,knee_z),
+                 (x,foot_y+3,step),(x,foot_y,step)]
+        # Six-sided trousers taper into a separate boot collar. The sole keeps
+        # the original ground contact; its forward toe reads from all angles.
+        profile=[(-.65,-1),(.65,-1),(1,0),(.65,1),(-.65,1),(-1,0)]
+        profiles=[[(dx*r,dz*r) for dx,dz in profile] for r in (2.7,2.35,1.85,2.1)]
+        profiles[-1]=[(dx*2.25,dz*2.5-1.25) for dx,dz in profile]
+        rings=[[(cx+dx,cy,cz+dz) for dx,dz in outline]
+               for (cx,cy,cz),outline in zip(centres,profiles)]
         tx=96 if guard else 32
-        for segment in range(2):
-            vtop,vbottom=(65,80) if segment==0 else (80,94)
+        for segment in range(3):
+            vtop,vbottom=((65,79),(79,88),(88,94))[segment]
             uv=[(tx+10,vbottom),(tx+20,vbottom),(tx+20,vtop),(tx+10,vtop)]
-            for i in range(3):
-                j=(i+1)%3
+            for i in range(6):
+                j=(i+1)%6
                 points=[rings[segment+1][i],rings[segment+1][j],rings[segment][j],rings[segment][i]]
                 inside=tuple((centres[segment][k]+centres[segment+1][k])/2 for k in range(3))
                 m.face(points,uv,inside=inside)
     # A six-sided head with a tapered jaw replaces the rectangular head box.
     outline=[(-2.6,-3.3),(2.6,-3.3),(3.8,-.5),(3.1,2.8),(-3.1,2.8),(-3.8,-.5)]
-    jaw=[(x*.72,14,z*.85) for x,z in outline]
+    jaw=[(x*.72,14.5,z*.85) for x,z in outline]
     crown=[(x,21,z) for x,z in outline]
     head_x=96 if guard else 32
     hair=[(head_x+2,39),(head_x+29,39),(head_x+29,33),(head_x+2,33)]
     for i in range(6):
         j=(i+1)%6
-        uv=tile(2 if guard else 0,1) if i==0 else hair if i==3 else tile(3 if guard else 1,1)
+        # Helmet geometry supplies its own silhouette: do not stretch the
+        # painted helmet across the face a second time. Mirror the profile on
+        # the left cheek; the rear head contains hair rather than another eye.
+        fx=64 if guard else 0
+        front=[(fx+3,62),(fx+28,62),(fx+28,45 if guard else 35),(fx+3,45 if guard else 35)]
+        profile=[(head_x+4,62),(head_x+27,62),(head_x+27,45 if guard else 35),(head_x+4,45 if guard else 35)]
+        uv=front if i==0 else profile if i==1 else [profile[j] for j in (1,0,3,2)] if i==5 else hair
         m.face([upper(p) for p in [jaw[i],jaw[j],crown[j],crown[i]]],uv,inside=upper((0,17,0)))
     for i in range(1,5):
         m.face([upper(crown[0]),upper(crown[i]),upper(crown[i+1])],
@@ -151,17 +159,28 @@ def character(name, guard=False, pose='rest'):
     if pose=='kick':hand=(1,12,-9);support=(-1,11,-8)
     if pose=='recover':hand=(1,10.5,-11);support=(-1,10,-10)
     if run:hand=(6,4,-3-stride*5);support=(-6,4,-3+stride*5)
+    if pose=='throw':hand=(5,21,-1);support=(-3,9,-8)
     for side,wrist in [(1,hand),(-1,support)]:
         elbow=(side*7,6,-3+(side*stride*-3 if run else 0))
+        if pose=='throw' and side==1:elbow=(8,17,2)
         # Shoulder/elbow fabric and forearm/glove use separate atlas ranges.
         sx=64 if guard else 0
         upper_uv=[(sx+11,81),(sx+21,81),(sx+21,66),(sx+11,66)]
         lower_uv=[(sx+11,93),(sx+20,93),(sx+20,79),(sx+11,79)]
-        bone(m,(side*7,11,0),elbow,1.8,upper_uv,transform=upper,sides=3)
-        bone(m,elbow,wrist,1.5,lower_uv,end=True,transform=upper,sides=3)
-    x,y,z=hand
+        bone(m,(side*5.5,11,0),elbow,2.2,upper_uv,transform=upper,sides=5,taper=.82)
+        bone(m,elbow,wrist,1.8,lower_uv,end=True,transform=upper,sides=5,taper=.72)
+    x,y,z=support if pose=='throw' else hand
     # Eight pistol triangles preserve the immutable pose cache capacity.
     box(m,(x-1,y-1,z-7),(x+1,y+1,z+1),tile(2,3),cap=False,transform=upper)
+    if guard:
+        # Six-sided sloped helmet rim; a compact rear radio pack.
+        rim=[(math.cos(i*math.pi/3)*4.3,20,math.sin(i*math.pi/3)*4) for i in range(6)]
+        dome=[(x*.72,23,z*.72) for x,y,z in rim]
+        for i in range(6):
+            j=(i+1)%6
+            m.face([upper(p) for p in [rim[i],rim[j],dome[j],dome[i]]],(76,70),inside=upper((0,21,0)))
+        m.face([upper(p) for p in dome],(76,70),inside=upper((0,21,0)))
+        box(m,(-3,2,3),(3,10,5),tile(3,0),transform=upper)
     triangles=m.write(name);print(f'{name}: {triangles} triangles')
 
 
@@ -180,7 +199,7 @@ def effects():
 
 
 def main():
-    variants=[('agent.obj',False,'rest'),('guard.obj',True,'aim')]
+    variants=[('agent.obj',False,'rest'),('guard.obj',True,'aim'),('gthrow.obj',True,'throw')]
     variants += [(n,g,pose) for n,g,pose in [('aim.obj',False,'aim'),('kick.obj',False,'kick'),('recover.obj',False,'recover'),('gkick.obj',True,'kick'),('grecover.obj',True,'recover')]]
     variants += [(prefix+str(i)+'.obj',guard,'run'+str(i))
                  for prefix,guard in [('prun',False),('grun',True)] for i in (1,2,3)]
@@ -193,7 +212,7 @@ def main():
     references += [(id,label+' passing pose',prefix+'3.obj')
                    for id,prefix,label in ((76,'prun','Pistol'),(78,'grun','Guard'))]
     for scene in project['scenes']:
-        if scene['id'] not in (1,2):continue
+        if scene['id'] not in (2,3):continue
         objects=scene['data']['objects'];template=next(o for o in objects if o['id']==65)
         for id,name,asset in references+[(80+i,'Muzzle flash '+str(i),'muzzle.obj') for i in range(3)]:
             existing=next((o for o in objects if o['id']==id),None)

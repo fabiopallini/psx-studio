@@ -41,7 +41,7 @@ def main():
     floor=Mesh();floor.face([(-40,0,-32),(40,0,-32),(40,0,32),(-40,0,32)],tile(2,0));floor.write('passage-floor.obj')
     path=ROOT/'examples/shadow-ops.psx';project=json.loads(path.read_text())
     for scene in project['scenes']:
-        if scene['id'] not in (1,2):continue
+        if scene['id'] not in (2,3):continue
         objects=scene['data']['objects'];by_id={o['id']:o for o in objects}
         def item(id,name,asset,position,bounds,solid=False,texture='atlas.png'):
             o=by_id.get(id)
@@ -59,7 +59,7 @@ def main():
             item(door_id,'Security gate - clear guards to open','security-gate.obj',[x,32,z],[40,32,4],True,'actors.png')
             item(floor_id,'Passage threshold','passage-floor.obj',[x,0,272*sign],[40,1,32])
             item(trigger_id,'Passage crossing trigger','',[x,24,282*sign],[30,24,12],texture='')
-        if scene['id']==1:opening(True,12,18,42,43,46,40)
+        if scene['id']==2:opening(True,12,18,42,43,46,40)
         else:
             opening(False,13,18,42,43,46,40)
             opening(True,12,19,44,45,47,41)

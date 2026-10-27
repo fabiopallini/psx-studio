@@ -78,7 +78,7 @@ from pathlib import Path
 
 path = Path("examples/shadow-ops.psx")
 project = json.loads(path.read_text())
-scene = next(s for s in project["scenes"] if s["id"] == 1)
+scene = next(s for s in project["scenes"] if s["id"] == 2)
 player = next(o for o in scene["data"]["objects"] if o["id"] == 2)
 player["position"] = [-190, 20, 150]
 if project["active_scene"] == scene["id"]:

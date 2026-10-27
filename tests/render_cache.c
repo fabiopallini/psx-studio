@@ -7,7 +7,7 @@ static void terrain_sharing(void)
 {
     PsxVertex vertices[288];
     PsxMesh mesh;
-    unsigned short shared[288],table[PSX_POSITION_HASH_SIZE];
+    unsigned short shared[576],table[PSX_POSITION_HASH_SIZE];
     const int corner[6]={0,1,2,0,2,3};
     const int dx[4]={0,1,1,0},dz[4]={0,0,1,1};
     int x,z,k,n;
@@ -19,6 +19,11 @@ static void terrain_sharing(void)
     }
     mesh.vertices=vertices;mesh.count=288;mesh.texture=0;
     assert(psx_share_positions(&mesh,shared,0,table)==63);
+    assert(psx_mesh_radius(&mesh)==420);
+    for(n=0;n<288;n++) for(k=0;k<3;k++) assert(vertices[shared[n]].p[k]==vertices[n].p[k]);
+    psx_copy_positions(shared,288,0,288);
+    for(n=0;n<288;n++) assert(shared[288+n]==288+shared[n]);
+    psx_copy_positions(shared,0,288,288);
     for(n=0;n<288;n++) for(k=0;k<3;k++) assert(vertices[shared[n]].p[k]==vertices[n].p[k]);
     /* Different positions deliberately collide in the power-of-two hash. */
     mesh.count=3;

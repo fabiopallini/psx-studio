@@ -26,6 +26,35 @@ static void collision(PsxObject *object, PsxObject *other, PsxScene *scene)
 static void arm_collision(PsxObject *object,PsxScene *scene,unsigned long input)
 {(void)scene;(void)input;object->collision_action=1;}
 
+static void arm_later_obstacle(PsxObject *object,PsxObject *other,PsxScene *scene)
+{
+    (void)object;(void)other;
+    scene->objects[2].solid=1;
+}
+
+static void movement_filter(void)
+{
+    PsxObject objects[3];
+    PsxScene scene;
+    PsxLogic logic;
+    int i,k;
+    memset(objects,0,sizeof(objects));memset(&scene,0,sizeof(scene));
+    memset(&logic,0,sizeof(logic));scene.objects=objects;scene.count=3;
+    for(i=0;i<3;i++) {
+        objects[i].alive=1;
+        for(k=0;k<3;k++) objects[i].half_size[k]=10;
+    }
+    objects[0].solid=1;
+    /* Overlapping decorations neither stop nor kill the mover. */
+    assert(psx_object_move(&objects[0],&scene,3,0,0));
+    objects[0].position[0]=0;
+    logic.collision=arm_later_obstacle;objects[1].logic=&logic;
+    /* A callback on an earlier pair may turn a later decoration solid during
+     * this same substep; filtering must observe the changed state. */
+    assert(!psx_object_move(&objects[0],&scene,3,0,0));
+    assert(objects[0].position[0]==0 && objects[2].solid);
+}
+
 int main(void)
 {
     PsxObject objects[3];
@@ -33,6 +62,7 @@ int main(void)
     PsxLogic logic;
     int i;
     int axis;
+    movement_filter();
     memset(objects, 0, sizeof(objects));
     memset(&scene,0,sizeof(scene));
     logic.init = 0;

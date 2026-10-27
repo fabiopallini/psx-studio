@@ -261,7 +261,7 @@ static gboolean normalize_sources(const char *output,GError **error)
     char *source=file_at(output,"src");GDir *dir=g_dir_open(source,0,error);gboolean ok=dir!=NULL;const char *name;
     while(ok && (name=g_dir_read_name(dir))) {
         char *lower=g_ascii_strdown(name,-1);
-        if(g_str_has_suffix(lower,".c") || g_str_has_suffix(lower,".h") || g_str_has_suffix(lower,".mak")) {
+        if(g_str_has_suffix(lower,".c") || g_str_has_suffix(lower,".h") || g_str_has_suffix(lower,".mak") || g_str_has_suffix(lower,".rsp")) {
             char *path=file_at(source,name);ok=dos_text(path,error);g_free(path);
         }
         g_free(lower);
@@ -323,7 +323,13 @@ static gboolean prepare_project(Project *project,const char *root,const char *ou
         JsonArray *modules=json_object_get_array_member(manifest,"modules"),*textures=json_object_get_array_member(manifest,"textures");
         GString *sources=g_string_new("main.c scene.c object.c");
         for(guint i=0;i<json_array_get_length(modules);i++) {g_string_append_c(sources,' ');g_string_append(sources,json_array_get_string_element(modules,i));}
-        if(ok) ok=rewrite(output,"src/makefile.mak","main.c object.c",sources->str,error);
+        /* DOS command tails are limited to 126 bytes. CCPSX control files
+         * keep multi-Scene module lists out of that command tail. */
+        g_string_append(sources," camera.c psx.c card.c\n");
+        char *control=file_at(src,"sources.rsp");
+        if(ok) ok=g_file_set_contents(control,sources->str,sources->len,error);
+        g_free(control);
+        if(ok) ok=rewrite(output,"src/makefile.mak","main.c object.c camera.c psx.c card.c","@sources.rsp",error);
         g_string_free(sources,TRUE);
         if(ok) ok=rewrite(output,"src/makefile.mak","-pedantic",diagnostics?"-pedantic-errors -DSTUDIO_DIAGNOSTICS":"-pedantic-errors",error);
         GString *entries=g_string_new("                    Directory ASSETS\n"),*log=g_string_new(NULL);

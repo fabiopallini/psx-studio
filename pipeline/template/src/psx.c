@@ -43,6 +43,8 @@ static int font_enabled = 1;
 static PsxFrameRate frame_rate;
 static PsxStepClock simulation_clock;
 static long camera_cy,camera_sy,camera_cp,camera_sp;
+static long object_cos[3],object_sin[3];
+static int cached_yaw,cached_pitch,camera_angles_valid;
 unsigned long studio_pad;
 static volatile unsigned char controller_buffers[2][34];
 void psCheckpoint(PsxCheckpoint *request);
@@ -138,9 +140,10 @@ int psSetScene(PsxScene *scene,PsxTexture *images,unsigned int count)
     if(scene->count>STUDIO_DRAW_LIMIT) return 0;
     start=0;
     for(i=0;i<scene->count && i<STUDIO_DRAW_LIMIT;i++) {
-        cache[i].valid=0;cache[i].start=start;cache[i].count=scene->objects[i].mesh?scene->objects[i].mesh->count:0;
+        cache[i].valid=0;cache[i].mesh=scene->objects[i].mesh;cache[i].start=start;cache[i].count=scene->objects[i].mesh?scene->objects[i].mesh->count:0;
         if(cache[i].count>12288-start) return 0;
         if(scene->objects[i].mesh) psx_share_positions(scene->objects[i].mesh,shared_vertices,start,position_hash);
+        cache[i].radius=scene->objects[i].mesh?psx_mesh_radius(scene->objects[i].mesh):0;
         start+=cache[i].count;
     }
     if(start>12288) return 0;
@@ -238,7 +241,7 @@ static void transform(const PsxObject *object,const long *local,long *p)
         p[2]=-fixed_mul(x,camera_sy)-fixed_mul(fixed_mul(camera_sp,camera_cy),y);
     } else for(k=0;k<3;k++) {
         if(!object->rotation[k]) continue;
-        a=(k+1)%3;b=(k+2)%3;c=rcos(object->rotation[k]);s=rsin(object->rotation[k]);x=p[a];y=p[b];
+        a=(k+1)%3;b=(k+2)%3;c=object_cos[k];s=object_sin[k];x=p[a];y=p[b];
         p[a]=fixed_mul(c,x)-fixed_mul(s,y);p[b]=fixed_mul(s,x)+fixed_mul(c,y);
     }
     for(k=0;k<3;k++) p[k]+=object->position[k];
@@ -339,6 +342,7 @@ static void draw_mesh(const PsxObject *object,unsigned int index)
     int inside;
     int near_clip;
     long world[3];
+    long radius,scale,value;
     long triangle[3][3];
     unsigned char uv[3][2];
     long a[12][5];
@@ -349,22 +353,50 @@ static void draw_mesh(const PsxObject *object,unsigned int index)
     int gte_ready;
     unsigned int common,region,edges;
     int has_near;
-    unsigned int slot;
+    unsigned int slot,source,unique;
     PsxTexture *texture;
     c=&cache[index];gte_ready=0;
     if(object->mesh->count>c->count) return;
     shape_dirty=psx_shape_changed(c,object,current_scene);
     if(psx_projection_changed(c,object,current_scene)) {
-        if(c->mesh!=object->mesh) psx_share_positions(object->mesh,shared_vertices,c->start,position_hash);
+        if(c->mesh!=object->mesh) {
+            /* Immutable poses also exist as hidden scene objects. Reuse their
+             * position map; UV corners remain independent. Unknown module
+             * meshes retain the hash fallback. No additional console RAM. */
+            for(source=0;source<current_scene->count;source++)
+                if(source!=index && cache[source].mesh==object->mesh) break;
+            if(source<current_scene->count) {
+                psx_copy_positions(shared_vertices,c->start,cache[source].start,object->mesh->count);
+                c->radius=cache[source].radius;
+            } else {
+                psx_share_positions(object->mesh,shared_vertices,c->start,position_hash);
+                c->radius=psx_mesh_radius(object->mesh);
+            }
+            c->mesh=object->mesh;c->valid=0;
+        }
+        if(object->mesh->count>=96) {
+            scale=0;
+            for(k=0;k<3;k++) {
+                value=object->scale[k];if(value<0) value=-value;
+                if(value>scale) scale=value;
+            }
+            radius=fixed_mul(c->radius,scale);
+            project(object->position,world);
+            if(psx_camera_bounds_outside_fixed(current_scene->projection,current_scene->zoom,world,radius)) {
+                /* No projected/world cache was filled for this pose. Keep it
+                 * invalid so re-entry transforms every required position. */
+                c->valid=0;return;
+            }
+        }
         prepare_gte(object);gte_ready=1;
-        common=15U;has_near=0;
+        common=15U;has_near=0;unique=0;
         for(i=0;i<object->mesh->count;i++) {
-            if(!(i&15U) && psUpdate()) {
+            slot=c->start+i;
+            if(shared_vertices[slot]!=slot) continue;
+            if(!(unique++&15U) && psUpdate()) {
                 if(simulation_scene->pending_scene) return;
                 prepare_gte(object);
             }
-            slot=c->start+i;
-            if(shared_vertices[slot]!=slot) continue;
             if(shape_dirty) {
                 transform(object,object->mesh->vertices[i].p,world);
                 for(k=0;k<3;k++) world_vertices[slot][k]=world[k]-object->position[k];
@@ -471,10 +503,19 @@ static void draw_box(const PsxObject *object,unsigned int index,int collider)
 }
 void psDrawObject(const PsxObject *object,unsigned int index)
 {
+    int k;
     if(!object->alive || object->kind==PSX_OBJECT_CAMERA || index>=STUDIO_DRAW_LIMIT) return;
-    /* Angles are constant while drawing a frame; avoid per-vertex trig. */
-    camera_cy=rcos(yaw());camera_sy=rsin(yaw());
-    camera_cp=rcos(pitch());camera_sp=rsin(pitch());
+    /* Snapshot camera angles persist across objects and render yields. */
+    if(!camera_angles_valid || cached_yaw!=yaw()) {
+        cached_yaw=yaw();camera_cy=rcos(cached_yaw);camera_sy=rsin(cached_yaw);
+    }
+    if(!camera_angles_valid || cached_pitch!=pitch()) {
+        cached_pitch=pitch();camera_cp=rcos(cached_pitch);camera_sp=rsin(cached_pitch);
+    }
+    camera_angles_valid=1;
+    for(k=0;k<3;k++) if(object->rotation[k]) {
+        object_cos[k]=rcos(object->rotation[k]);object_sin[k]=rsin(object->rotation[k]);
+    }
     if(object->mesh) draw_mesh(object,index);else draw_box(object,index,0);
     if(current_scene && current_scene->show_colliders) draw_box(object,index,1);
 }

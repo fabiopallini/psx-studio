@@ -60,6 +60,12 @@ int psx_object_move(PsxObject *object, PsxScene *scene, long dx, long dy, long d
         for (i = 0; i < scene->count; i++) {
             PsxObject *other;
             other = &scene->objects[i];
+            /* Decorative overlaps cannot block movement or notify game code.
+             * Re-evaluate per pair: earlier callbacks may change these flags. */
+            if (!(object->solid && other->solid) &&
+                !object->collision_action && !other->collision_action &&
+                (!object->logic || !object->logic->collision) &&
+                (!other->logic || !other->logic->collision)) continue;
             if (!psx_objects_overlap(object, other)) continue;
             if (object->solid && other->solid) {
                 for (axis = 0; axis < 3; axis++) object->position[axis] = previous[axis];

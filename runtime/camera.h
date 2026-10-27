@@ -17,6 +17,7 @@ typedef struct PsxCamera {
 #endif
 
 /* Fixed-point console path: zoom=4096 means 1.0; validated scene range. */
+int psx_camera_bounds_outside_fixed(int projection,long zoom,const long view[3],long radius);
 int psx_camera_project_fixed(int projection, long zoom, const long view[3], long screen[3]);
 
 /* Q12 camera rotation for GTE/local view transforms; output is Q12. */

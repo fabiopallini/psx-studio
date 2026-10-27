@@ -41,6 +41,32 @@ static unsigned int psx_share_positions(const PsxMesh *mesh,
     return unique;
 }
 
+/* Source/destination are disjoint object allocations, including hidden pose
+ * references. Relocate absolute indices without touching position/UV data. */
+static void psx_copy_positions(unsigned short *shared,unsigned int destination,
+    unsigned int source,unsigned int count)
+{
+    unsigned int i;
+    for(i=0;i<count;i++)
+        shared[destination+i]=(unsigned short)(destination+shared[source+i]-source);
+}
+
+/* L1 radius bounds Euclidean distance for any subsequent rotation. Meshes
+ * are immutable; compute once per asset/pose, not once per rendered frame. */
+static long psx_mesh_radius(const PsxMesh *mesh)
+{
+    unsigned int i;
+    int k;
+    long radius,sum,value;
+    radius=0;
+    for(i=0;i<mesh->count;i++) {
+        sum=0;
+        for(k=0;k<3;k++) {value=mesh->vertices[i].p[k];sum+=value<0?-value:value;}
+        if(sum>radius) radius=sum;
+    }
+    return radius;
+}
+
 static int psx_gte_offset_fits(const long *offset)
 {
     return offset[0]>=-32768 && offset[0]<=32767 && offset[1]>=-32768 &&
@@ -102,6 +128,7 @@ static unsigned int psx_screen_region(const long *point)
 
 typedef struct PsxProjectionCache {
     long position[3],rotation[3],scale[3],camera[3],zoom;
+    long radius;
     int yaw,pitch,projection,valid,kind,camera_eye;
     unsigned int start,count,outside;
     const PsxMesh *mesh;

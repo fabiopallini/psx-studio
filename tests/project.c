@@ -639,7 +639,20 @@ static void shadow_ops_example(void)
     }
     Project p;project_init(&p);GError *error=NULL;char *harness=NULL;
     g_assert_true(project_load(&p,"examples/shadow-ops.psx",&error));g_assert_no_error(error);
-    g_assert_cmpuint(p.scenes->len,==,3);
+    g_assert_cmpuint(p.scenes->len,==,5);
+    g_assert_cmpuint(p.scene_id,==,1);g_assert_cmpuint(p.startup_scene,==,1);
+    g_assert_cmpuint(((Scene*)g_ptr_array_index(p.scenes,0))->id,==,1);
+    /* Industrial scenery must not replace the bright shot-effect atlas. */
+    for(guint i=0;i<p.scenes->len;i++) {
+        Project view;
+        g_assert_true(project_scene_view(&p,i,&view,&error));g_assert_no_error(error);
+        for(guint j=0;j<view.objects->len;j++) {
+            Object *o=g_ptr_array_index(view.objects,j);
+            if(!g_strcmp0(o->asset,"tracer.obj") || !g_strcmp0(o->asset,"muzzle.obj"))
+                g_assert_cmpstr(o->texture,==,"atlas.png");
+        }
+        project_clear(&view);
+    }
     g_assert_true(g_file_get_contents("tests/shadow_game.c",&harness,NULL,&error));g_assert_no_error(error);
     compile_export(&p,harness,"export-shadow-ops");
     g_free(harness);project_clear(&p);

@@ -93,6 +93,28 @@ int psx_camera_clip_line(double a[3], double b[3])
 
 #endif /* Desktop camera helpers. */
 
+/* Conservative view-space sphere rejection. Inflate for Q12 rotation and
+ * truncation (three object rotations plus camera rotation). Large scales/zoom
+ * fall back to normal clipping. With these bounds, scaled coordinates times
+ * focal distance stay below 200 million on a signed 32-bit console long. */
+int psx_camera_bounds_outside_fixed(int projection,long zoom,const long view[3],long radius)
+{
+    long lower[3],upper[3],a[3],b[3];
+    int k;
+    if(radius<0 || radius>32767 || zoom<=0 || zoom>8192) return 0;
+    for(k=0;k<3;k++) if(view[k]<-131072L || view[k]>131072L) return 0;
+    radius+=16+radius/64;
+    if(projection && view[2]+radius<PSX_CAMERA_NEAR) return 1;
+    if(projection && view[2]-radius<PSX_CAMERA_NEAR) return 0;
+    for(k=0;k<2;k++) {lower[k]=view[k]-radius;upper[k]=view[k]+radius;}
+    /* Far-depth corners are closest to screen centre when the entire sphere
+     * lies on one side of an edge. A centre-straddling bound cannot be rejected. */
+    lower[2]=upper[2]=view[2]+radius;
+    psx_camera_project_fixed(projection,zoom,lower,a);
+    psx_camera_project_fixed(projection,zoom,upper,b);
+    return a[0]>163 || b[0]<-164 || a[1]>131 || b[1]<-132;
+}
+
 int psx_camera_project_fixed(int projection, long zoom, const long view[3], long screen[3])
 {
     int axis;

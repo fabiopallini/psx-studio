@@ -78,8 +78,30 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(output, self.output())
         self.assertEqual(json.loads((output / 'project.snapshot.psx').read_text()), self.data)
         self.assertTrue((output / 'src/scene.c').is_file())
-        self.assertIn('scene.c', (output / 'src/makefile.mak').read_text())
+        self.assertIn('@sources.rsp', (output / 'src/makefile.mak').read_text())
+        self.assertIn('scene.c', (output / 'src/sources.rsp').read_text())
         self.assertTrue((output / 'src/camera.h').read_text().startswith('#define PSX_RUNTIME_FIXED_ONLY 1\n'))
+
+    def test_long_module_list_uses_ccpsx_control_file(self):
+        data = self.project.with_name('game_psx_data')
+        data.mkdir()
+        for i in range(20):
+            name = f'logic{i}.c'
+            (data / name).write_text('#include "object.h"\nconst PsxLogic psx_logic={0,0,0};\n')
+            obj = dict(self.data['objects'][0], id=i+1, module=name)
+            if i == 0:
+                self.data['objects'] = [obj]
+            else:
+                self.data['objects'].append(obj)
+        self.save()
+        self.prepare()
+        output = self.output()
+        command = next(line.strip() for line in (output / 'src/makefile.mak').read_text().splitlines() if 'ccpsx ' in line)
+        self.assertIn('@sources.rsp', command)
+        self.assertLess(len(command.replace('$(CFLAGS)', '-O3 -Xo$80010000 -Wall -pedantic-errors')), 126)
+        sources = (output / 'src/sources.rsp').read_text().split()
+        self.assertEqual(len([s for s in sources if s.startswith('M')]), 20)
+        self.assertIn('card.c', sources)
 
     def test_failed_export_removes_stale_success_artifacts(self):
         self.prepare()

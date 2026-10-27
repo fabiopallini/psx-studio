@@ -53,6 +53,8 @@ The UI starts the same executable with `--build-ps1` through GSubprocess,
 keeping GTK responsive. `build.sh` is a convenience wrapper for this command.
 The native pipeline snapshots the project/assets, exports sources and TIM files,
 runs Psy-Q through DOSBox, and verifies the executable and CD contents.
+Project source lists use a DOS 8.3 `sources.rsp` CCPSX control file so multiple
+Scene modules do not exceed DOS's 126-byte command-tail limit.
 It mounts the SDK read-only and invalidates previous final artifacts before export.
 
 UI output is `build/ps1/PROJECT/`. CLI output-root overrides and legacy custom
@@ -100,7 +102,19 @@ Transforms, projection and clipping use integer/fixed-point math. Q12 scales and
 zoom use 4096 for 1.0; rotations use 4096 units per turn. Console camera builds
 exclude desktop floating-point helpers. Shared-position and local-geometry caches
 reduce repeated work; GTE transforms have an integer fallback for wide coordinates.
-Meshes must stay immutable while snapshots/caches reference them.
+Meshes must stay immutable while snapshots/caches reference them. On pose swaps,
+the renderer relocates the shared-position map from another scene object using
+that immutable mesh (including hidden animation references), falling back to
+hashing for unknown module meshes. Camera trigonometry is reused until the
+snapshot angles change; object trigonometry is calculated once per draw. Render
+yields remain between objects, every 16 unique projected positions and every 16
+triangles, preserving fixed-step input service during expensive frames.
+For meshes with at least 32 triangles, a cached local L1 radius supplies a
+conservative view-space bound before vertex transformation. Scale uses the
+largest absolute Q12 component; a 16-unit plus 1/64-radius allowance covers
+rotation/truncation error. Near-plane intersections and oversized coordinates or
+zoom fall back to the full path. Rejected objects keep their projection cache
+invalid so re-entry cannot reuse uncomputed geometry.
 
 Ordering-table flags explicitly handle flat backdrop ground, translucent decals,
 backface rejection and emissive effects. Ordinary geometry retains depth sorting;
