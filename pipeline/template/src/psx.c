@@ -20,6 +20,7 @@ static union {
 } polygons[2][8192];
 static unsigned long tim_buffer[34000];
 static TILE hud_tiles[2][160];
+static struct { SPRT sprite; DR_TPAGE mode; } background_tiles[2][2];
 static PsxProjectionCache cache[STUDIO_OBJECT_LIMIT];
 static unsigned short shared_vertices[12288];
 static unsigned short position_hash[PSX_POSITION_HASH_SIZE];
@@ -504,7 +505,7 @@ static void draw_box(const PsxObject *object,unsigned int index,int collider)
 void psDrawObject(const PsxObject *object,unsigned int index)
 {
     int k;
-    if(!object->alive || object->kind==PSX_OBJECT_CAMERA || index>=STUDIO_OBJECT_LIMIT) return;
+    if(!object->alive || (object->render_flags&PSX_RENDER_HIDDEN) || object->kind==PSX_OBJECT_CAMERA || index>=STUDIO_OBJECT_LIMIT) return;
     /* Snapshot camera angles persist across objects and render yields. */
     if(!camera_angles_valid || cached_yaw!=yaw()) {
         cached_yaw=yaw();camera_cy=rcos(cached_yaw);camera_sy=rsin(cached_yaw);
@@ -647,8 +648,31 @@ void psDrawHud(void)
     }
     if(combat) hud_weapons();
 }
+/* Draw after building the world OT so these primitives are its first entries.
+ * Exact-size sprites avoid affine seams and keep the background fixed on screen. */
+static void draw_background(void)
+{
+    unsigned int first,part;
+    SPRT *sprite;
+    DR_TPAGE *mode;
+    PsxTexture *image;
+    if(!current_scene || !current_scene->background_texture) return;
+    first=current_scene->background_texture-1;
+    if(first>=texture_count || texture_count-first<2) return;
+    for(part=0;part<2;part++) {
+        image=&textures[first+part];sprite=&background_tiles[buffer_index][part].sprite;
+        mode=&background_tiles[buffer_index][part].mode;
+        setSprt(sprite);setShadeTex(sprite,1);setRGB0(sprite,128,128,128);
+        setXY0(sprite,part?256:0,0);setUV0(sprite,image->u,image->v);
+        setWH(sprite,part?64:256,256);
+        setDrawTPage(mode,0,0,image->tpage);
+        addPrim(&ordering[buffer_index][STUDIO_DRAW_LIMIT-1],sprite);
+        addPrim(&ordering[buffer_index][STUDIO_DRAW_LIMIT-1],mode);
+    }
+}
 void psDisplay(void)
 {
+    draw_background();
     rendering=0;frames.queued=buffer_index;poll_render();
 }
 

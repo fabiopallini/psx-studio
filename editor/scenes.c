@@ -20,6 +20,7 @@ static void transfer_view(Project *p,Project *q)
 {
     g_ptr_array_unref(p->objects);p->objects=q->objects;q->objects=NULL;
     p->next_id=q->next_id;p->active_camera=q->active_camera;
+    g_free(p->background);p->background=q->background;q->background=NULL;
     memcpy(p->camera,q->camera,sizeof(p->camera));memcpy(p->view,q->view,sizeof(p->view));
     p->projection=q->projection;p->drag_axis=q->drag_axis;
     p->show_game_frame=q->show_game_frame;p->show_colliders=q->show_colliders;

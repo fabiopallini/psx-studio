@@ -102,7 +102,14 @@ static void update_dropdown_model(GtkWidget *widget,GtkStringList *names)
 
 void studio_refresh(Studio *s)
 {
+    if(s->closing) return;
     s->refreshing = TRUE;
+    if(s->background_label) {
+        char *name=*s->project.background?g_path_get_basename(s->project.background):g_strdup("No background");
+        gtk_label_set_text(GTK_LABEL(s->background_label),name);g_free(name);
+        gtk_widget_set_tooltip_text(s->background_label,*s->project.background?s->project.background:"Fixed screen background behind 3D objects");
+        gtk_widget_set_sensitive(s->background_remove,*s->project.background!=0);
+    }
     if(s->scene_selector) {
         GtkStringList *names=gtk_string_list_new(NULL);guint index=0;
         for(guint i=0;i<s->project.scenes->len;i++) {Scene *scene=g_ptr_array_index(s->project.scenes,i);
@@ -346,13 +353,19 @@ static void choose_file(Studio *s, gboolean save)
     g_object_unref(dialog);
 }
 
+static void destroy_window(Studio *s)
+{
+    /* Entry/dropdown teardown emits changes while sibling widgets disappear. */
+    s->closing=TRUE;s->refreshing=TRUE;gtk_window_destroy(GTK_WINDOW(s->window));
+}
+
 static void perform_action(Studio *s, int action)
 {
     if (action == 0) {
         history_reset(s);viewport_clear_assets(s); project_clear(&s->project); project_init(&s->project); s->selected = -1;
         studio_refresh(s); studio_status(s, "New project. Add an object to get started.");
     } else if (action == 1) choose_file(s, FALSE);
-    else gtk_window_destroy(GTK_WINDOW(s->window));
+    else destroy_window(s);
 }
 
 typedef struct { Studio *studio; int action; } PendingAction;
@@ -441,7 +454,7 @@ static void build_finished(GObject *source, GAsyncResult *result, gpointer data)
     if (s->build_and_exit) {
         if (!ok) exit_status = 1;
         if (s->smoke_path) g_timeout_add(300, smoke_snapshot, s);
-        else gtk_window_destroy(GTK_WINDOW(s->window));
+        else destroy_window(s);
     }
     g_application_release(G_APPLICATION(s->application));
 }
@@ -461,7 +474,7 @@ static void build_clicked(GtkButton *button, Studio *s)
     }
     if (problem) {
         studio_status(s, problem); g_clear_error(&error);
-        if (s->build_and_exit) { exit_status = 1; gtk_window_destroy(GTK_WINDOW(s->window)); }
+        if (s->build_and_exit) { exit_status = 1; destroy_window(s); }
         return;
     }
     title(s);
@@ -472,7 +485,7 @@ static void build_clicked(GtkButton *button, Studio *s)
     g_object_unref(launcher);
     if (!s->build_process) {
         studio_status(s, error->message); g_clear_error(&error);
-        if (s->build_and_exit) { exit_status = 1; gtk_window_destroy(GTK_WINDOW(s->window)); }
+        if (s->build_and_exit) { exit_status = 1; destroy_window(s); }
         return;
     }
     gtk_widget_set_sensitive(s->menubar, FALSE); gtk_widget_set_sensitive(s->body, FALSE);
@@ -599,6 +612,12 @@ static void imported(GObject *source,GAsyncResult *result,gpointer data)
             g_task_run_in_thread(task,audio_import_worker);g_object_unref(task);
             g_object_unref(file);g_clear_error(&error);return;
         }
+        if(type==4) {
+            studio_checkpoint(s,NULL);viewport_clear_assets(s);
+            if(path && asset_import_background(&s->project,path,&error)) {studio_refresh(s);studio_status(s,"Scene background imported. Use a fixed camera to align the 3D space.");}
+            else if(error) studio_status(s,error->message);
+            g_free(path);g_object_unref(file);g_clear_error(&error);return;
+        }
         Object *o=selected(s);studio_checkpoint(s,NULL);viewport_clear_assets(s);
         if(o && path && asset_import(&s->project,o,path,type,&error)) {studio_refresh(s);studio_status(s,"Asset imported into the project data folder.");}
         else if(error) studio_status(s,error->message);
@@ -608,19 +627,19 @@ static void imported(GObject *source,GAsyncResult *result,gpointer data)
 }
 static void import_asset(Studio *s,int type)
 {
-    const char *problem=type!=3 && !selected(s)?"Select an object before importing assets.":
+    const char *problem=type!=3 && type!=4 && !selected(s)?"Select an object before importing assets.":
         !s->project.path?"Save the project before importing assets.":NULL;
     if(problem) {
         studio_status(s,problem);
         GtkAlertDialog *alert=gtk_alert_dialog_new("%s",problem);
-        gtk_alert_dialog_set_detail(alert,type!=3 && !selected(s)?
+        gtk_alert_dialog_set_detail(alert,type!=3 && type!=4 && !selected(s)?
             "Choose an object in the list, then click Import again.":
             "Use Save to choose a project location, then click Import again. Imported files are copied into the project's data folder.");
         gtk_alert_dialog_show(alert,GTK_WINDOW(s->window));g_object_unref(alert);return;
     }
-    GtkFileDialog *dialog=gtk_file_dialog_new();gtk_file_dialog_set_modal(dialog,TRUE);gtk_file_dialog_set_title(dialog,type==0?"Import OBJ":type==1?"Import PNG texture":type==2?"Import C89 module":"Import WAV audio");
-    GtkFileFilter *filter=gtk_file_filter_new();gtk_file_filter_add_pattern(filter,type==0?"*.obj":type==1?"*.png":type==2?"*.c":"*.wav");
-    gtk_file_filter_add_pattern(filter,type==0?"*.OBJ":type==1?"*.PNG":type==2?"*.C":"*.WAV");
+    GtkFileDialog *dialog=gtk_file_dialog_new();gtk_file_dialog_set_modal(dialog,TRUE);gtk_file_dialog_set_title(dialog,type==0?"Import OBJ":type==1?"Import PNG texture":type==2?"Import C89 module":type==4?"Import scene background PNG":"Import WAV audio");
+    GtkFileFilter *filter=gtk_file_filter_new();gtk_file_filter_add_pattern(filter,type==0?"*.obj":(type==1 || type==4)?"*.png":type==2?"*.c":"*.wav");
+    gtk_file_filter_add_pattern(filter,type==0?"*.OBJ":(type==1 || type==4)?"*.PNG":type==2?"*.C":"*.WAV");
     GListStore *filters=g_list_store_new(GTK_TYPE_FILE_FILTER);g_list_store_append(filters,filter);
     gtk_file_dialog_set_filters(dialog,G_LIST_MODEL(filters));g_object_unref(filters);g_object_unref(filter);
     if(type==3) {
@@ -633,6 +652,14 @@ static void import_asset(Studio *s,int type)
 static void import_clicked(GtkButton *button,Studio *s)
 {
     import_asset(s,GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button),"import-type")));
+}
+static void import_background_clicked(GtkButton *button,Studio *s)
+{ (void)button;import_asset(s,4); }
+static void remove_background_clicked(GtkButton *button,Studio *s)
+{
+    (void)button;if(!*s->project.background) return;
+    studio_checkpoint(s,NULL);viewport_clear_assets(s);g_free(s->project.background);s->project.background=g_strdup("");
+    s->project.dirty=TRUE;studio_refresh(s);
 }
 static void detach_clicked(GtkButton *button,Studio *s)
 {
@@ -1133,7 +1160,7 @@ static gboolean smoke_snapshot(gpointer data)
         if (node) gsk_render_node_unref(node);
         g_object_unref(paintable);
     }
-    gtk_window_destroy(GTK_WINDOW(s->window));
+    destroy_window(s);
     return G_SOURCE_REMOVE;
 }
 
@@ -1312,6 +1339,11 @@ static void activate(GtkApplication *app, Studio *s)
     GtkWidget *scene_buttons=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,4);gtk_box_append(GTK_BOX(left),scene_buttons);
     button(scene_buttons,"+ Scene",G_CALLBACK(scene_add_clicked),s);button(scene_buttons,"Delete Scene",G_CALLBACK(scene_delete_clicked),s);
     s->startup_button=gtk_check_button_new_with_label("Startup Scene");gtk_box_append(GTK_BOX(left),s->startup_button);g_signal_connect(s->startup_button,"toggled",G_CALLBACK(scene_start_toggled),s);
+    s->background_label=gtk_label_new("No background");gtk_label_set_ellipsize(GTK_LABEL(s->background_label),PANGO_ELLIPSIZE_MIDDLE);
+    gtk_box_append(GTK_BOX(left),s->background_label);
+    GtkWidget *background_buttons=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,4);gtk_box_append(GTK_BOX(left),background_buttons);
+    button(background_buttons,"Background...",G_CALLBACK(import_background_clicked),s);
+    s->background_remove=button(background_buttons,"Remove",G_CALLBACK(remove_background_clicked),s);
     gtk_box_append(GTK_BOX(left), heading("OBJECTS"));
     const char *labels[] = { "+ 3D Object", "+ Sprite", "+ Sprite3D", "+ Camera" };
     for (int i = 0; i < 4; i++) {

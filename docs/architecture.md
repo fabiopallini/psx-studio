@@ -53,6 +53,14 @@ so this memory saving does not reduce depth-sorting precision. Scene textures ar
 VRAM slots. Runtime transitions clean up the previous Scene, reset live object
 storage, initialize the destination and reload its resources.
 
+Each Scene may reference a pre-rendered PNG plate through `background`. Native
+host decoding resamples it to 320×256 and exports two 16-bit TIM tiles, reserving
+their VRAM rectangles before packing object textures. The runtime's 1-based
+`background_texture` index selects that pair; zero keeps legacy Scenes unchanged.
+Sprites inserted at the head of the far ordering bucket draw before all geometry,
+including world-space backdrop meshes. Background pixels live in VRAM after
+Scene load, rather than adding an image transfer to the frame loop.
+
 ## Native build pipeline
 
 The UI starts the same executable with `--build-ps1` through GSubprocess,

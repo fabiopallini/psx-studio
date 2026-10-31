@@ -71,7 +71,10 @@ static gboolean export_one(const Project *p,const char *directory,GError **error
     GPtrArray *textures=g_ptr_array_new_with_free_func(texture_free);
     GPtrArray *modules=g_ptr_array_new_with_free_func(g_free);
     GPtrArray *sounds=g_ptr_array_new_with_free_func(sound_free);
+    GPtrArray *module_contents=g_ptr_array_new_with_free_func(g_free);
     gboolean ok=TRUE; guint triangles=0;
+    Asset *background=NULL,*background_tiles[2]={NULL,NULL};
+    guint background_texture=0;
     for(guint i=0;i<p->objects->len && ok;i++) {
         Object *o=g_ptr_array_index(p->objects,i);
         Asset *a=NULL;
@@ -100,14 +103,32 @@ static gboolean export_one(const Project *p,const char *directory,GError **error
     if(ok && (triangles>4096 || textures->len>6 || modules->len>64)) ok=bad(error,"Scene limits: 4096 triangles, 6 textures, 64 distinct modules.");
     g_ptr_array_sort(textures,texture_compare);
     gboolean used[6]={FALSE,FALSE,FALSE,FALSE,FALSE,FALSE};
+    if(ok && *p->background) {
+        if(textures->len>4) {ok=bad(error,"A scene background reserves two VRAM slots; use at most four object textures.");goto done;}
+        background=asset_load_background(p,error);
+        if(!background) {ok=FALSE;goto done;}
+        used[0]=used[1]=TRUE;
+    }
     const int sx[]={320,576,832,320,576,832},sy[]={0,0,0,256,256,256};
     for(guint i=0;i<textures->len && ok;i++) {
         Texture *t=g_ptr_array_index(textures,i); int slot=-1;
-        for(int k=0;k<6;k++) if(!used[k] && t->width<=(k%3==2?192U:256U)) {slot=k;break;}
-        if(slot<0) ok=bad(error,"VRAM exhausted: only four textures can be wider than 192 pixels.");
+        for(int k=0;k<6;k++) if(!used[k] && t->width<=((background && k==5)?128U:k%3==2?192U:256U)) {slot=k;break;}
+        if(slot<0) ok=bad(error,background?"Background VRAM exhausted: object slots fit 256, 256, 192 and 128 pixels; the last slot preserves the font.":"VRAM exhausted: only four textures can be wider than 192 pixels.");
         else { used[slot]=TRUE; t->x=sx[slot];t->y=sy[slot]; }
     }
-    GPtrArray *module_contents=g_ptr_array_new_with_free_func(g_free);
+
+    if(background && ok) {
+        background_texture=textures->len+1;
+        for(guint part=0;part<2;part++) {
+            Asset *tile=g_new0(Asset,1);tile->width=part?64:256;tile->height=256;
+            tile->pixels=g_malloc(tile->width*256*4);background_tiles[part]=tile;
+            for(guint y=0;y<256;y++) memcpy(tile->pixels+y*tile->width*4,
+                background->pixels+(y*320+(part?256:0))*4,tile->width*4);
+            Texture *t=g_new0(Texture,1);t->path=g_strdup(p->background);
+            t->width=tile->width;t->height=256;t->x=part?576:320;t->y=0;t->visual=tile;
+            g_ptr_array_add(textures,t);
+        }
+    }
     for(guint i=0;i<modules->len && ok;i++) {
         char *path=asset_path(p,g_ptr_array_index(modules,i)),*contents=NULL;gsize length;
         ok=path && g_file_get_contents(path,&contents,&length,error);g_free(path);
@@ -191,6 +212,7 @@ static gboolean export_one(const Project *p,const char *directory,GError **error
     else g_string_append(source,"scene.sounds=0;scene.sound_count=0;scene.play_sound=0;scene.play_music=0;\n");
     for(int k=0;k<3;k++) g_string_append_printf(source,"scene.camera[%d]=%ldL;\n",k,lround(p->camera[k]+(k==2?600:0)));
     g_string_append_printf(source,"scene.yaw=%ld;scene.pitch=%ld;scene.zoom=%ldL;\n",lround(p->view[0]*4096/360),lround(p->view[1]*4096/360),lround(p->view[2]*4096));
+    g_string_append_printf(source,"scene.background_texture=%uU;\n",background_texture);
     g_string_append_printf(source,"scene.projection=%d;scene.active_camera=%uU;scene.camera_eye=0;scene.show_colliders=%d;\n",p->projection,p->active_camera,p->show_colliders);
     g_string_append_printf(source,"memcpy(objects,object_defaults,%u*sizeof(PsxObject));\n",p->objects->len);
     g_string_append(source,"psx_scene_init(&scene);return &scene;\n}\n");
@@ -222,6 +244,7 @@ static gboolean export_one(const Project *p,const char *directory,GError **error
     if(ok) ok=write_file(directory,"assets.json",manifest->str,error);
     g_string_free(manifest,TRUE);
  done:
+    asset_free(background);asset_free(background_tiles[0]);asset_free(background_tiles[1]);
     g_ptr_array_unref(sounds);g_ptr_array_unref(visuals);g_ptr_array_unref(textures);g_ptr_array_unref(modules);g_ptr_array_unref(module_contents);
     return ok;
 }

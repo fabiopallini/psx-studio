@@ -10,6 +10,7 @@
 #define PSX_RENDER_CULL_BACKFACES 2
 #define PSX_RENDER_DECAL 4 /* Translucent green ground overlay, above backdrop. */
 #define PSX_RENDER_ALERT 8 /* Orange instead of green decal. */
+#define PSX_RENDER_HIDDEN 64 /* Collision-only objects; alive/solid logic remains active. */
 #define PSX_RENDER_EMISSIVE 32 /* Bright unlit textured effects (white-hot tips). */
 
 typedef struct PsxObject PsxObject;
@@ -115,6 +116,7 @@ struct PsxScene {
     unsigned int sound_count;
     int (*play_music)(PsxScene *scene,const char *name,int volume);
     int (*play_sound)(PsxScene *scene,const char *name,int volume,int pan);
+    unsigned int background_texture; /* 0 none; otherwise first of two screen-space TIM tiles, 1-based. */
 };
 
 /* Volume 0..16383, pan Q12 -4096..4096. No I/O/wait in this call. */

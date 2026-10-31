@@ -185,6 +185,20 @@ PS1 modules must use integer or fixed-point arithmetic. The console has no FPU;
 do not use float/double or floating-point math calls in gameplay callbacks.
 See `AGENTS.md` for the project arithmetic rules.
 
+## Scene plates and invisible collision volumes
+
+Scene backgrounds are configured in the editor/JSON, not positioned as meshes.
+The exporter sets `scene->background_texture` to a 1-based index for two native
+TIM tiles; zero means no plate. Leave it under exporter ownership in game modules.
+See [textures](textures.md#pre-rendered-scene-backgrounds) for dimensions, VRAM
+packing and fixed-camera authoring. A plate has no depth or collision information.
+
+Use `object->render_flags |= PSX_RENDER_HIDDEN` for a collision-only object.
+It remains alive and solid, participates in movement/hit logic and can be found
+normally, but the console skips drawing it. Unlike killing an object, this does
+not remove its collider. The editor does not execute module flags, so its editing
+view still displays the object's wireframe for authoring.
+
 ## Optional gameplay HUD
 
 A module can enable `scene->hud.enabled` and set `health`, `max_health`, `ammo`

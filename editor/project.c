@@ -24,7 +24,7 @@ void project_init(Project *p)
     p->name = g_strdup("New project");
     p->psyq_path = g_strdup("");
     p->emulator_command=g_strdup("pcsxr -cdfile {cue}");
-    p->dosbox = g_strdup(""); p->output_path = g_strdup("");
+    p->dosbox = g_strdup(""); p->output_path = g_strdup("");p->background=g_strdup("");
     p->view[0] = .55 * 180 / G_PI; p->view[1] = .6 * 180 / G_PI; p->view[2] = .9;
     p->objects = g_ptr_array_new_with_free_func(object_free);
     p->next_id = 1;
@@ -37,7 +37,7 @@ void project_init(Project *p)
 
 void project_clear(Project *p)
 {
-    g_free(p->name); g_free(p->path); g_free(p->psyq_path); g_free(p->asset_root); g_free(p->dosbox); g_free(p->output_path); g_free(p->emulator_command);
+    g_free(p->name); g_free(p->path); g_free(p->psyq_path); g_free(p->asset_root); g_free(p->dosbox); g_free(p->output_path); g_free(p->emulator_command);g_free(p->background);
     g_clear_pointer(&p->objects, g_ptr_array_unref);
     g_clear_pointer(&p->scenes,g_ptr_array_unref);
     memset(p, 0, sizeof(*p));
@@ -156,6 +156,7 @@ char **project_emulator_argv(const char *command,const char *cue,const char *iso
 
 gboolean project_validate_scene(const Project *p, GError **error)
 {
+    if(!relative_asset(p->background)) return fail(error,"Scene background must use a path relative to the data folder, without '..'.");
     if(p->emulator_command && *p->emulator_command) {
         char **argv=project_emulator_argv(p->emulator_command,"game.cue","GAME.ISO",error);
         if(!argv) return FALSE;
@@ -259,6 +260,7 @@ JsonNode *project_scene_to_json(const Project *p)
     string_member(b, "psyq_path", p->psyq_path);
     json_builder_set_member_name(b,"show_colliders");json_builder_add_boolean_value(b,p->show_colliders);
     vector_member(b, "camera", p->camera); vector_member(b, "view", p->view);
+    string_member(b,"background",p->background);
     string_member(b,"projection",p->projection?"perspective":"orthographic");
     string_member(b,"emulator_command",p->emulator_command);
     string_member(b, "dosbox", p->dosbox); string_member(b, "output_path", p->output_path);
@@ -312,6 +314,7 @@ gboolean project_save(Project *p, const char *path, GError **error)
                 Object *o=g_ptr_array_index(view.objects,i);const char *refs[]={o->asset,o->texture,o->module};
                 for(int k=0;k<3;k++) if(*refs[k]) {char *source=asset_path(&view,refs[k]);valid=source && g_file_test(source,G_FILE_TEST_IS_REGULAR);g_free(source);if(!valid) break;}
             }
+            if(valid && *view.background) {char *source=asset_path(&view,view.background);valid=source && g_file_test(source,G_FILE_TEST_IS_REGULAR);g_free(source);}
             project_clear(&view);
             if(!valid) {g_free(data_dir);g_free(canonical);return fail(error,"Save as: a referenced asset is missing from a Scene.");}
         }
@@ -366,6 +369,10 @@ gboolean project_scene_decode(Project *p, JsonNode *root, GError **error)
         return fail(error, "Incomplete project: missing name, settings, camera or objects.");
     g_free(p->name); p->name = g_strdup(json_object_get_string_member(doc, "name"));
     g_free(p->psyq_path); p->psyq_path = g_strdup(json_object_get_string_member(doc, "psyq_path"));
+    if(json_object_has_member(doc,"background")) {
+        if(!typed(doc,"background",G_TYPE_STRING)) return fail(error,"Invalid scene background path.");
+        g_free(p->background);p->background=g_strdup(json_object_get_string_member(doc,"background"));
+    }
     if (json_object_has_member(doc,"projection")) {
         if(!typed(doc,"projection",G_TYPE_STRING)) return fail(error,"Invalid camera projection.");
         const char *mode=json_object_get_string_member(doc,"projection");

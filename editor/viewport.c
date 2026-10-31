@@ -2,13 +2,19 @@
 #include "viewport_shaders.h"
 #include <math.h>
 
+static double background_scale(const Studio *s)
+{
+    if(!s->project.background || !*s->project.background || !s->viewport) return 1;
+    return MAX(.1,MIN(gtk_widget_get_width(s->viewport)/320.0,gtk_widget_get_height(s->viewport)/256.0));
+}
+
 static PsxCamera camera(const Studio *s)
 {
     PsxCamera c;
     double yaw=s->project.view[0]*G_PI/180,pitch=s->project.view[1]*G_PI/180;
     for(int k=0;k<3;k++) c.center[k]=s->project.camera[k]+(k==2?600:0);
     c.cy=cos(yaw);c.sy=sin(yaw);c.cp=cos(pitch);c.sp=sin(pitch);
-    c.zoom=s->project.view[2];c.projection=s->project.projection;
+    c.zoom=s->project.view[2]*background_scale(s);c.projection=s->project.projection;
     return c;
 }
 
@@ -72,6 +78,8 @@ void viewport_clear_assets(Studio *s)
 {
     gboolean gl= s->viewport && gtk_widget_get_realized(s->viewport);
     if(gl) { gtk_gl_area_make_current(GTK_GL_AREA(s->viewport)); gl=!gtk_gl_area_get_error(GTK_GL_AREA(s->viewport)); }
+    if(gl && s->background_visual && s->background_visual->texture_id) glDeleteTextures(1,&s->background_visual->texture_id);
+    asset_free(s->background_visual);s->background_visual=NULL;s->background_attempted=FALSE;
     for(guint i=0;i<s->project.objects->len;i++) {
         Object *o=g_ptr_array_index(s->project.objects,i);
         if(gl && o->visual && o->visual->texture_id) glDeleteTextures(1,&o->visual->texture_id);
@@ -159,7 +167,7 @@ static void axis_stroke(Studio *s,const double *a,const double *b,
         for(int k=0;k<4;k++) ends[clipped+k]=ends[k]+t*(ends[6+k]-ends[k]);
     }
     if(ends[3]<=0 || ends[9]<=0) return;
-    double w=gtk_widget_get_width(s->viewport),h=gtk_widget_get_height(s->viewport);
+    double scale=background_scale(s),w=gtk_widget_get_width(s->viewport)/scale,h=gtk_widget_get_height(s->viewport)/scale;
     double dx=(ends[6]/ends[9]-ends[0]/ends[3])*w;
     double dy=(ends[7]/ends[9]-ends[1]/ends[3])*h;
     double length=hypot(dx,dy);
@@ -228,6 +236,28 @@ static void draw_camera(Studio *s,Object *original)
     line(s,corners[1],corners[3],selected?1:.2,selected?.85:.8,selected?.2:1);
 }
 
+static void draw_background(Studio *s)
+{
+    if(!*s->project.background) return;
+    if(!s->background_attempted) {
+        GError *error=NULL;s->background_visual=asset_load_background(&s->project,&error);s->background_attempted=TRUE;
+        if(error) {studio_status(s,error->message);g_error_free(error);}
+    }
+    Asset *a=s->background_visual;if(!a) return;
+    if(!a->texture_id) {
+        glGenTextures(1,&a->texture_id);glBindTexture(GL_TEXTURE_2D,a->texture_id);
+        glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,320,256,0,GL_RGBA,GL_UNSIGNED_BYTE,a->pixels);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+    }
+    double scale=background_scale(s),x=320*scale/gtk_widget_get_width(s->viewport),y=256*scale/gtk_widget_get_height(s->viewport);
+    GLfloat v[]={-x,y,0,1,0,0, x,y,0,1,1,0, x,-y,0,1,1,1,
+                 -x,y,0,1,0,0, x,-y,0,1,1,1, -x,-y,0,1,0,1};
+    glDisable(GL_DEPTH_TEST);glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,a->texture_id);
+    glUniform1i(glGetUniformLocation(s->program,"textured"),1);glUniform4f(glGetUniformLocation(s->program,"tint"),1,1,1,1);
+    glBufferData(GL_ARRAY_BUFFER,sizeof(v),v,GL_STREAM_DRAW);glDrawArrays(GL_TRIANGLES,0,6);
+}
+
 static gboolean render(GtkGLArea *area, GdkGLContext *context, Studio *s)
 {
     (void)context;
@@ -238,6 +268,7 @@ static gboolean render(GtkGLArea *area, GdkGLContext *context, Studio *s)
     glUseProgram(s->program); glBindVertexArray(s->vao); glBindBuffer(GL_ARRAY_BUFFER, s->vbo);
     glEnableVertexAttribArray(0); glVertexAttribPointer(0,4,GL_FLOAT,GL_FALSE,6*sizeof(GLfloat),NULL);
     glEnableVertexAttribArray(1);glVertexAttribPointer(1,2,GL_FLOAT,GL_FALSE,6*sizeof(GLfloat),(void*)(4*sizeof(GLfloat)));
+    draw_background(s);
     for (int i = -10; i <= 10; i++) {
         int u=s->project.drag_axis==0?1:0,v=s->project.drag_axis==2?1:2;
         double a[3]={0},b[3]={0},c[3]={0},d[3]={0};
@@ -271,7 +302,7 @@ static gboolean render(GtkGLArea *area, GdkGLContext *context, Studio *s)
         axis_stroke(s,origin,axis_ends[i],4,axis_colors[i][0],axis_colors[i][1],axis_colors[i][2]);
     }
     if(s->project.show_game_frame) {
-        double w=gtk_widget_get_width(s->viewport),h=gtk_widget_get_height(s->viewport);
+        double scale=background_scale(s),w=gtk_widget_get_width(s->viewport)/scale,h=gtk_widget_get_height(s->viewport)/scale;
         GLfloat frame[]={-320/w,-256/h,0,1,0,0, 320/w,-256/h,0,1,0,0, 320/w,256/h,0,1,0,0, -320/w,256/h,0,1,0,0};
         glUniform1i(glGetUniformLocation(s->program,"textured"),0);glUniform4f(glGetUniformLocation(s->program,"tint"),.65,.65,.65,1);
         glBufferData(GL_ARRAY_BUFFER,sizeof(frame),frame,GL_STREAM_DRAW);glDrawArrays(GL_LINE_LOOP,0,4);

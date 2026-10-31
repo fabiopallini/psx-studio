@@ -102,6 +102,32 @@ class BuildTests(unittest.TestCase):
         self.prepare()
         self.assertIn('#define STUDIO_OBJECT_LIMIT 1', (output / 'src/psx.h').read_text())
 
+    def test_background_is_snapshotted_and_split_into_native_tim_tiles(self):
+        import zlib
+        data = self.project.with_name('game_psx_data') / 'plates'
+        data.mkdir(parents=True)
+        def chunk(kind, payload):
+            return struct.pack('>I', len(payload)) + kind + payload + struct.pack('>I', zlib.crc32(kind + payload))
+        png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 640, 512, 8, 2, 0, 0, 0))
+        png += chunk(b'IDAT', zlib.compress((b'\0' + b'\x80\x40\x20' * 640) * 512)) + chunk(b'IEND', b'')
+        (data / 'room.png').write_bytes(png)
+        self.data['background'] = 'plates/room.png'
+        self.save()
+        self.prepare()
+        output = self.output()
+        self.assertEqual((output / 'data/plates/room.png').read_bytes(), png)
+        manifest = json.loads((output / 'src/assets.json').read_text())
+        self.assertEqual([(t['x'], t['y'], t['width'], t['height']) for t in manifest['textures']],
+                         [(320, 0, 256, 256), (576, 0, 64, 256)])
+        self.assertIn('scene.background_texture=1U', (output / 'src/S000.C').read_text())
+        for texture in manifest['textures']:
+            self.assertEqual((output / 'data' / texture['file']).stat().st_size,
+                             20 + texture['width'] * texture['height'] * 2)
+        (data / 'room.png').unlink()
+        with self.assertRaises(RuntimeError):
+            self.prepare()
+        self.assertFalse((output / 'data/plates/room.png').exists())
+
     def test_long_module_list_uses_ccpsx_control_file(self):
         data = self.project.with_name('game_psx_data')
         data.mkdir()

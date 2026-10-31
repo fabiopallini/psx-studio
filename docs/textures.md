@@ -46,3 +46,31 @@ Preview colours are reduced to RGB555, matching native TIM conversion. Selection
 uses the existing outline without tinting the texture. The OpenGL preview still
 uses desktop geometry/depth precision: it is not a pixel-exact PS1 GPU emulator,
 and does not execute game modules, animation or runtime render flags.
+
+## Pre-rendered Scene backgrounds
+
+Use **Background...** in the Scenes panel to import a PNG without selecting an
+object. The project must be saved first. **Remove** clears only that Scene's
+reference; the data file remains available to other Scenes and undo history.
+Backgrounds participate in undo/redo, Scene switching, Save As and build snapshots.
+
+The optional Scene JSON field `background` is a path relative to the project data
+folder; empty or absent means no background. The editor accepts PNGs up to 4 MB
+and 2048×2048. Native export samples them to the **320×256 PAL framebuffer** using
+nearest-neighbour sampling, compositing alpha over black. Author the composition
+for that frame; imported images fill it rather than adding letterbox bars.
+Ordinary object textures retain their 256×256 limit.
+
+Export splits the plate into opaque RGB555 tiles: 256×256 at VRAM `(320,0)` and
+64×256 at `(576,0)`. These reserve two texture slots. A background Scene supports
+up to four ordinary object textures, in slots with widths 256, 256, 192 and 128;
+the 128-pixel slot leaves the font area free. Height remains at most 256.
+Textures are uploaded once at Scene load. Two screen-space GPU sprites draw the
+plate before world geometry and HUD, without uploading image pixels each frame.
+
+The editor fits the native game frame into the viewport and scales the 3D preview
+with it. **View through camera** aligns the authoring view to the chosen camera.
+Use a fixed camera to keep painted perspective consistent while actors move.
+This is a single background plate, without depth/foreground masks or automatic
+collision extraction. Paint foreground obstacles outside the walkable region,
+and author their 3D collision volumes separately.

@@ -62,6 +62,8 @@ static void invalid_open_preserves_state(void)
 {
     const char *bad[] = {
         "[]", "{", "{\"version\":2}",
+        "{\"version\":3,\"name\":\"p\",\"psyq_path\":\"\",\"camera\":[0,0,0],\"objects\":[],\"background\":7}",
+        "{\"version\":3,\"name\":\"p\",\"psyq_path\":\"\",\"camera\":[0,0,0],\"objects\":[],\"background\":\"../escape.png\"}",
         "{\"version\":1,\"name\":7,\"psyq_path\":\"\",\"camera\":[0,0,0],\"objects\":[]}",
         "{\"version\":1,\"name\":\"p\",\"psyq_path\":\"\",\"camera\":[0,0],\"objects\":[]}",
         "{\"version\":1,\"name\":\"p\",\"psyq_path\":\"\",\"camera\":[0,0,0],\"objects\":[{}]}",
@@ -670,6 +672,98 @@ static void shadow_ops_example(void)
     g_free(harness);project_clear(&p);
 }
 
+static void scene_background(void)
+{
+    Project p,q;project_init(&p);project_init(&q);GError *error=NULL;
+    char *source=path("plate.png"),*file=path("plate.psx");
+    png_image image;memset(&image,0,sizeof(image));image.version=PNG_IMAGE_VERSION;
+    image.width=640;image.height=512;image.format=PNG_FORMAT_RGBA;
+    guchar *pixels=g_malloc(640*512*4);
+    for(guint y=0;y<512;y++) for(guint x=0;x<640;x++) {
+        guchar *pixel=pixels+(y*640+x)*4;
+        pixel[0]=x<512?248:0;pixel[1]=x<512?0:248;pixel[2]=0;pixel[3]=255;
+    }
+    pixels[(640+1)*4+3]=0; /* Sampled top-left texel composites to opaque black. */
+    g_assert_true(png_image_write_to_file(&image,source,FALSE,pixels,0,NULL));g_free(pixels);
+    g_assert_false(asset_import_background(&p,source,&error));g_clear_error(&error);
+    g_assert_true(project_save(&p,file,&error));g_assert_no_error(error);
+    g_assert_true(asset_import_background(&p,source,&error));g_assert_no_error(error);
+    char *reference=g_strdup(p.background);
+    Asset *plate=asset_load_background(&p,&error);g_assert_no_error(error);g_assert_nonnull(plate);
+    g_assert_cmpuint(plate->width,==,320);g_assert_cmpuint(plate->height,==,256);
+    g_assert_cmpuint(plate->pixels[0],==,0);g_assert_cmpuint(plate->pixels[3],==,255);g_assert_cmpuint(plate->pixels[4],==,248);g_assert_cmpuint(plate->pixels[(319*4)+1],==,248);asset_free(plate);
+    g_assert_nonnull(project_scene_add(&p,"Without plate"));g_assert_cmpstr(p.background,==,"");
+    g_assert_true(project_scene_switch(&p,1,&error));g_assert_cmpstr(p.background,==,reference);
+    g_assert_true(project_save(&p,file,&error));g_assert_true(project_load(&q,file,&error));g_assert_no_error(error);
+    g_assert_cmpstr(q.background,==,reference);
+    compile_export(&p,
+        "#include \"scene.h\"\n#include <assert.h>\nint main(void){PsxScene *s;unsigned int i,j;"
+        "s=studio_scene_load_id(1);assert(s->background_texture==1 && studio_texture_count==2);"
+        "assert(studio_textures[0].x==320 && studio_textures[0].w==256 && studio_textures[0].h==256);"
+        "assert(studio_textures[1].x==576 && studio_textures[1].w==64);"
+        "for(i=0;i<studio_texture_count;i++)for(j=i+1;j<studio_texture_count;j++)"
+        "assert(studio_textures[i].x+studio_textures[i].w<=studio_textures[j].x || studio_textures[j].x+studio_textures[j].w<=studio_textures[i].x);"
+        "s=studio_scene_load_id(2);assert(!s->background_texture && !studio_texture_count);"
+        "s=studio_scene_load_id(1);assert(s->background_texture==1);return 0;}\n",
+        "background-linkage");
+    char *directory=path("background-pixels");g_assert_true(project_export(&p,directory,&error));
+    char *tim=g_build_filename(directory,"T001.TIM",NULL),*bytes=NULL;gsize size=0;
+    g_assert_true(g_file_get_contents(tim,&bytes,&size,&error));g_assert_no_error(error);
+    g_assert_cmpuint(size,==,20+64*256*2);g_assert_cmpuint((guchar)bytes[20],==,224);g_assert_cmpuint((guchar)bytes[21],==,3);
+    g_free(bytes);g_free(tim);
+    Object probe={0};probe.kind=OBJECT_SPRITE;probe.asset="";probe.texture=p.background;
+    g_assert_null(asset_load(&p,&probe,&error));g_clear_error(&error); /* Mesh PNG limits stay unchanged. */
+    char *regular=fixture_asset("plate-regular.png"),*png_bytes=NULL;gsize png_size=0;
+    g_assert_true(g_file_get_contents(regular,&png_bytes,&png_size,&error));
+    for(guint i=0;i<5;i++) {
+        Object *o=project_add(&p,OBJECT_SPRITE);char *name=g_strdup_printf("regular-%u.png",i),*destination=asset_path(&p,name);
+        g_assert_true(g_file_set_contents(destination,png_bytes,png_size,&error));g_free(destination);
+        g_free(o->texture);o->texture=name;
+        if(i<4) {g_assert_true(project_export(&p,directory,&error));g_assert_no_error(error);}
+        else {g_assert_false(project_export(&p,directory,&error));g_assert_nonnull(error);g_clear_error(&error);}
+    }
+    g_ptr_array_remove_index(p.objects,p.objects->len-1);g_free(regular);g_free(png_bytes);
+    compile_export(&p,
+        "#include \"scene.h\"\n#include <assert.h>\nint main(void){unsigned int i,j;studio_scene_load_id(1);"
+        "assert(studio_texture_count==6);for(i=0;i<6;i++)for(j=i+1;j<6;j++)"
+        "assert(studio_textures[i].x+studio_textures[i].w<=studio_textures[j].x || studio_textures[j].x+studio_textures[j].w<=studio_textures[i].x ||"
+        "studio_textures[i].y+studio_textures[i].h<=studio_textures[j].y || studio_textures[j].y+studio_textures[j].h<=studio_textures[i].y);return 0;}\n",
+        "background-vram");
+    png_image wide;memset(&wide,0,sizeof(wide));wide.version=PNG_IMAGE_VERSION;
+    wide.width=192;wide.height=8;wide.format=PNG_FORMAT_RGBA;
+    guchar wide_pixels[192*8*4];memset(wide_pixels,255,sizeof(wide_pixels));
+    for(guint i=0;i<4;i++) {
+        char *name=g_strdup_printf("regular-%u.png",i),*target=asset_path(&p,name);
+        g_assert_true(png_image_write_to_file(&wide,target,FALSE,wide_pixels,0,NULL));g_free(name);g_free(target);
+    }
+    g_assert_false(project_export(&p,directory,&error));g_assert_nonnull(error);g_clear_error(&error);
+    char *font_safe=asset_path(&p,"regular-0.png");wide.width=128;
+    g_assert_true(png_image_write_to_file(&wide,font_safe,FALSE,wide_pixels,0,NULL));g_free(font_safe);
+    g_assert_true(project_export(&p,directory,&error));g_assert_no_error(error);
+    char *copy=path("plate-copy.psx");g_assert_true(project_save(&p,copy,&error));g_assert_no_error(error);
+    char *asset=asset_path(&p,p.background);g_assert_true(g_file_test(asset,G_FILE_TEST_IS_REGULAR));g_free(asset);
+    char *missing=asset_path(&p,p.background),*failed_copy=path("missing-plate-copy.psx");
+    g_assert_cmpint(g_remove(missing),==,0);
+    g_assert_false(project_save(&p,failed_copy,&error));g_assert_nonnull(error);g_clear_error(&error);
+    g_free(missing);g_free(failed_copy);
+    g_assert_true(g_file_set_contents(source,"invalid PNG",-1,&error));
+    g_assert_false(asset_import_background(&p,source,&error));g_clear_error(&error);g_assert_cmpstr(p.background,==,reference);
+    g_free(p.background);p.background=g_strdup("../escape.png");g_assert_false(project_validate(&p,&error));g_clear_error(&error);
+    g_free(p.background);p.background=g_strdup("");
+    project_clear(&p);project_clear(&q);g_free(reference);g_free(directory);g_free(copy);g_free(source);g_free(file);
+}
+
+static void last_ward_example(void)
+{
+    if(!g_file_test("examples/last-ward.psx",G_FILE_TEST_IS_REGULAR)) {
+        g_test_skip("Install the Last Ward example archive to run this integration check.");return;
+    }
+    Project p;project_init(&p);GError *error=NULL;char *harness=NULL;
+    g_assert_true(project_load(&p,"examples/last-ward.psx",&error));g_assert_no_error(error);
+    g_assert_true(g_file_get_contents("tests/last_ward.c",&harness,NULL,&error));g_assert_no_error(error);
+    compile_export(&p,harness,"export-last-ward");g_free(harness);project_clear(&p);
+}
+
 static void scene_snapshot_isolation(void)
 {
     Project p,q;project_init(&p);project_init(&q);GError *error=NULL;
@@ -705,6 +799,8 @@ int main(int argc, char **argv)
     g_test_add_func("/project/duplicate-ids-relative-paths", duplicate_ids_and_paths);
     g_test_add_func("/project/relocation", relocation);
     g_test_add_func("/export/sound-assets",sound_assets);
+    g_test_add_func("/export/scene-background",scene_background);
+    g_test_add_func("/export/last-ward-example",last_ward_example);
     g_test_add_func("/export/c89-runtime-scene", export_c89_scene);
     g_test_add_func("/export/empty-and-capacity", export_empty_and_capacity);
     g_test_add_func("/export/rejects-unsupported", export_rejects_unsupported);

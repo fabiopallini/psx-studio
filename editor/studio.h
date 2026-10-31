@@ -37,7 +37,7 @@ typedef struct {
 typedef struct { guint id; char *name; JsonNode *data; } Scene;
 typedef struct {
     char *name, *path, *psyq_path, *asset_root;
-    char *dosbox, *output_path, *emulator_command;
+    char *dosbox, *output_path, *emulator_command, *background;
     GPtrArray *objects;
     guint next_id;
     double camera[3];
@@ -56,7 +56,7 @@ typedef struct {
     GtkWidget *numbers[4][3], *psyq, *log, *project_name;
     Project project;
     int selected;
-    gboolean refreshing;
+    gboolean refreshing, closing;
     GLuint program, vao, vbo;
     double zoom, yaw, pitch, drag_x, drag_z, orbit_yaw, orbit_pitch;
     double drag_screen_x, drag_screen_y, drag_anchor[3], drag_start[3];
@@ -66,6 +66,8 @@ typedef struct {
     GtkWidget *menubar, *body, *projection_button, *frame_button, *view_preset, *drag_plane, *drag_hint;
     GtkWidget *scale_panel, *camera_panel, *camera_active, *camera_zoom, *camera_projection;
     GtkWidget *visual_imports[2];
+    GtkWidget *background_label, *background_remove;
+    Asset *background_visual;gboolean background_attempted;
     GtkWidget *scene_selector, *scene_name, *startup_button, *collision_scene, *follow_target;
     GtkWidget *collider_offset[3], *follow_offset[3], *colliders_button;
     GPtrArray *undo, *redo;gpointer history_key;gint64 history_time;gboolean restoring;
@@ -109,6 +111,8 @@ void studio_status(Studio *s, const char *message);
 GtkWidget *viewport_create(Studio *s);
 Asset *asset_load(const Project *p, const Object *o, GError **error);
 void asset_free(Asset *asset);
+Asset *asset_load_background(const Project *p,GError **error);
+gboolean asset_import_background(Project *p,const char *source,GError **error);
 long asset_uv_texel(double coordinate,guint size);
 gboolean asset_write_tim(const Asset *asset, const char *path, int x, int y, GError **error);
 gboolean asset_import(Project *p, Object *o, const char *source, int type, GError **error);

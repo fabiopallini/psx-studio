@@ -18,6 +18,10 @@ and converted directly to the PlayStation VAG format.
 4. Open **File → Settings** and select your Psy-Q SDK and DOSBox executable.
 5. Choose **Build → Build**, then **Run emulator** to play.
 
+A Scene can also use a pre-rendered PNG background: choose **Background...** in
+the Scenes panel, then align a fixed 3D camera with the image. Actors and
+collisions continue to use the normal 3D runtime.
+
 The editor view supports perspective and orthographic views. Right-drag to orbit,
 scroll to zoom, and use Shift + scroll to move sideways. Select objects to edit
 properties in the tabs on the right. Use Scenes to create multiple levels.
@@ -108,6 +112,11 @@ repository's **GitHub Releases**. They are not included in the source repository
   movement, a following camera and Scene transitions.
 - **Shadow Ops** (`shadow-ops.psx`): a tactical shooter with enemies, shooting,
   pickups, gated passages and manual memory-card checkpoints.
+
+**Last Ward** (`last-ward.psx`) is a new development example of the background
+feature: an original fixed-camera sanitarium demo with an armed 3D survivor and
+four zombies. Like the other examples, its project/data/guide are distributed
+separately; available example projects depend on the release archive.
 
 Download and extract the ZIP, then use **File → Open** in PSX Studio to select
 either `.psx` project. Keep each project's accompanying `*_psx_data/` folder

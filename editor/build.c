@@ -286,6 +286,11 @@ static gboolean snapshot_assets(const Project *project,const char *original,cons
                 g_free(source);g_free(destination);g_free(parent);
             }
         }
+        if(ok && *view.background) {
+            char *target=file_at(data,view.background),*parent=g_path_get_dirname(target);
+            ok=make_directory(parent,error) && copy_relative(original,data,view.background,error);
+            g_free(parent);g_free(target);
+        }
         project_clear(&view);
     }
     if(ok && g_file_test(original,G_FILE_TEST_IS_DIR)) {

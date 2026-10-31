@@ -131,6 +131,15 @@ share `/export/shadow-ops-example`; no separate prototype project is required.
 Menu-style HUD messages have an opaque bordered panel sized to their visible
 text, including checkpoint confirmations and errors.
 
+The optional `examples/last-ward.psx` is an original fixed-camera survival horror
+demo with a pre-rendered plate and genuine 3D actors/collisions/projectiles.
+Its accompanying guide documents controls, module IDs and the absence of depth
+masks. `/export/last-ward-example` tests the installed demo; it skips when absent.
+Generic `/export/scene-background` and native pipeline fixtures remain independent
+of example assets. Check both authoring preview and console framing after changing
+a plate or its camera; host exports cannot prove that the painted perspective
+matches the walkable geometry.
+
 ## Commands and verification
 
 Run from `psx-studio/`. No installation is needed if dependencies are present.
@@ -248,8 +257,6 @@ development diary.
 
 ### Known limitations
 
-- Linux editor smoke checks can emit GTK teardown assertions despite saving a
-  PNG and exiting zero. This remains an unresolved GUI issue.
 - Shadow Ops industrial sectors do not sustain 30 FPS in the tested PCSX-R
   setup; see the example guide for measurements. Direct-to-gameplay diagnostic
   launches have stalled there, while the normal New Game path worked.
@@ -258,6 +265,11 @@ development diary.
   access and initial positioning were assisted through emulator RAM, so this is
   not a natural campaign playthrough or a physical-console measurement. Fixed
   simulation steps remain independent of the number of rendered images.
+- Last Ward's initial PCSX-R movement/turning check reported approximately
+  15–16 presented FPS. The background is static in VRAM; actor rendering still
+  uses the ordinary 3D renderer. Controlled native combat checks repositioned
+  actors through guest RAM; they are not a natural full playthrough or a physical
+  PS1 performance measurement.
 - Earlier Windows 11 packaging/ANGLE checks do not establish current interactive
   GUI, SDK or emulator compatibility. Physical PS1 hardware and Windows 10 remain
   unverified. Emulator FPS is not a physical-console performance guarantee.
