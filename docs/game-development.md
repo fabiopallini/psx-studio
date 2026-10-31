@@ -265,8 +265,8 @@ development diary.
   access and initial positioning were assisted through emulator RAM, so this is
   not a natural campaign playthrough or a physical-console measurement. Fixed
   simulation steps remain independent of the number of rendered images.
-- Last Ward's initial PCSX-R movement/turning check reported approximately
-  15–16 presented FPS. The background is static in VRAM; actor rendering still
+- Last Ward's PCSX-R movement checks reported approximately 15–16 presented
+  FPS initially and 14.7 FPS with the two-room/pixel-blood version. The background is static in VRAM; actor rendering still
   uses the ordinary 3D renderer. Controlled native combat checks repositioned
   actors through guest RAM; they are not a natural full playthrough or a physical
   PS1 performance measurement.

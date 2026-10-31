@@ -2,7 +2,7 @@
 """Optional desktop art/project generator for the original Last Ward demo.
 
 Requires the Shadow Ops example's original actor atlas and gunshot, Pillow,
-and background.png already present in last-ward_psx_data. Never edits Shadow Ops.
+and both room backgrounds already present in last-ward_psx_data. Never edits Shadow Ops.
 The generated project runs/builds natively without Python.
 """
 import copy
@@ -38,11 +38,54 @@ def zombie(name,phase=0,dead=False):
         box((side*8-3,8,-31),(side*8+3,13,-25),0)
     m.write(name)
 
+def blood_art():
+    # Established deterministic atlas workflow: crisp pixel clusters, transparent
+    # background, nearest-neighbour sampling by the PS1 texture hardware.
+    image=Image.new('RGBA',(16,16),(0,0,0,0));draw=ImageDraw.Draw(image)
+    for rect,color in [((6,5,9,9),(176,18,24,255)),((4,6,6,7),(224,37,32,255)),
+                       ((9,3,10,6),(208,24,30,255)),((9,8,12,9),(130,12,22,255)),
+                       ((5,9,6,11),(192,22,28,255)),((2,3,3,4),(207,28,30,255)),
+                       ((12,1,13,2),(230,42,36,255)),((13,11,14,12),(168,16,24,255)),
+                       ((1,9,2,10),(150,12,22,255)),((8,13,9,14),(196,24,28,255))]:
+        draw.rectangle(rect,fill=color)
+    image.save(DATA/'blood.png')
+
+def expand_rooms(project):
+    game=next(scene['data'] for scene in project['scenes'] if scene['id']==2)
+    if not any(o['id']==81 for o in game['objects']):
+        template=next(o for o in game['objects'] if o['id']==80)
+        for i in range(4):
+            o=copy.deepcopy(template)
+            o.update(id=81+i,name='Pixel blood impact '+str(i+1),kind='billboard',asset='',texture='blood.png',
+                     scale=[.6,.6,.6],bounds=[1,1,1])
+            game['objects'].append(o)
+    next(o for o in game['objects'] if o['id']==10)['position'][2]=-470
+    room=copy.deepcopy(game);room['background']='ward-background.png'
+    next(o for o in room['objects'] if o['id']==200)['name']='Fixed treatment ward camera'
+    # The second room has beds at the sides rather than an atrium reception desk.
+    desk=next(o for o in room['objects'] if o['id']==14)
+    desk.update(name='Side bed collision volume',position=[-280,50,-70],bounds=[40,50,175])
+    for o,(x,z) in zip([o for o in room['objects'] if 20<=o['id']<=23],
+                       [(-120,-60),(125,-80),(-105,110),(120,150)]):
+        o['position']=[x,32,z]
+    for data,z,target in ((game,-355,3),(room,-415,2)):
+        data['objects']=[o for o in data['objects'] if o['id']!=30]
+        portal=copy.deepcopy(next(o for o in data['objects'] if o['id']==10))
+        portal.update(id=30,name='Door trigger - '+('Treatment ward' if target==3 else 'Atrium'),
+                      position=[0,32,z],bounds=[28,32,23],scale=[28/24,32/24,23/24],
+                      solid=False,collision_action=3,target_scene=target,module='')
+        data['objects'].insert(1,portal)
+    project['scenes']=[scene for scene in project['scenes'] if scene['id']!=3]
+    project['scenes'].append(dict(id=3,name='Treatment ward',data=room))
+    if project['active_scene']==2:
+        project['objects']=copy.deepcopy(game['objects'])
+    blood_art()
+
 def generate():
     if any(not (SOURCE/name).exists() for name in ('actors.png','atlas.png','tracer.obj','muzzle.obj','shot.vag')):
         raise SystemExit('Install the original Shadow Ops example assets first.')
-    if any(not (DATA/name).exists() for name in ('background.png','ward.c','menu.c')):
-        raise SystemExit('Supply background.png, ward.c and menu.c from the Last Ward example archive first.')
+    if any(not (DATA/name).exists() for name in ('background.png','ward-background.png','ward.c','menu.c')):
+        raise SystemExit('Supply both backgrounds, ward.c and menu.c from the Last Ward example archive first.')
     if (ROOT/'examples/last-ward.psx').exists():
         raise SystemExit('Project exists; preserve/move it before regenerating the demo.')
     DATA.mkdir(parents=True,exist_ok=True);art.DATA=DATA
@@ -96,6 +139,7 @@ def generate():
     title=copy.deepcopy(base);titlecamera=copy.deepcopy(camera);titlecamera['module']='menu.c';title['objects']=[titlecamera]
     project=copy.deepcopy(game);project.update(active_scene=2,startup_scene=1,
         scenes=[dict(id=1,name='Last Ward - briefing',data=title),dict(id=2,name='Sanitarium atrium',data=game)])
+    expand_rooms(project)
     (ROOT/'examples/last-ward.psx').write_text(json.dumps(project,indent=2)+'\n')
     print('Created examples/last-ward.psx')
 if __name__=='__main__':generate()

@@ -10,6 +10,8 @@ and converted directly to the PlayStation VAG format.
 
 ![PSX Studio editing the Shadow Ops level in the 3D viewport](screenshots/screenshot.png)
 
+![PSX Studio editing Last Ward with a pre-rendered background and 3D characters](screenshots/screenshot2.png)
+
 ## Getting started
 
 1. Create a project and save it as a `.psx` file.
@@ -105,21 +107,20 @@ Command-line output remains available when captured by scripts and the build log
 
 ## Examples
 
-Two ready-made projects are available in the **examples ZIP** attached to this
-repository's **GitHub Releases**. They are not included in the source repository:
+Example projects are distributed separately in the **examples ZIP** attached to
+this repository's **GitHub Releases**, rather than in the source repository:
 
 - **First Scene** (`first-scene.psx`): a simple two-level example with player
   movement, a following camera and Scene transitions.
 - **Shadow Ops** (`shadow-ops.psx`): a tactical shooter with enemies, shooting,
   pickups, gated passages and manual memory-card checkpoints.
-
-**Last Ward** (`last-ward.psx`) is a new development example of the background
-feature: an original fixed-camera sanitarium demo with an armed 3D survivor and
-four zombies. Like the other examples, its project/data/guide are distributed
-separately; available example projects depend on the release archive.
+- **Last Ward** (`last-ward.psx`): an original fixed-camera sanitarium demo with
+  pre-rendered backgrounds, an armed 3D survivor, two connected rooms, eight
+  zombies and pixel-art blood impacts. Editable door triggers allow travel
+  between rooms while preserving health, ammunition and enemy state.
 
 Download and extract the ZIP, then use **File → Open** in PSX Studio to select
-either `.psx` project. Keep each project's accompanying `*_psx_data/` folder
+a `.psx` project. Keep each project's accompanying `*_psx_data/` folder
 and guide with it. Extracting into the repository folder restores `examples/`
 for the example commands and integration tests in the development guides.
 

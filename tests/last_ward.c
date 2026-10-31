@@ -1,6 +1,7 @@
 #include "scene.h"
 #include <assert.h>
 #include <string.h>
+extern void ward_reset(void);
 static PsxObject *object(PsxScene *s,unsigned int id)
 {
     unsigned int i;
@@ -10,7 +11,7 @@ static PsxObject *object(PsxScene *s,unsigned int id)
 static PsxScene *isolated(void)
 {
     PsxScene *s;int i;
-    s=studio_scene_load_id(2);
+    ward_reset();s=studio_scene_load_id(2);
     for(i=0;i<4;i++) {object(s,20U+(unsigned int)i)->position[0]=1000;object(s,20U+(unsigned int)i)->position[2]=1000;}
     return s;
 }
@@ -29,7 +30,7 @@ int main(void)
     int i,g;
     s=studio_scene_load();assert(s->scene_id==1 && s->background_texture && s->hud.style==PSX_HUD_MENU);
     psx_scene_update(s,64UL);assert(s->pending_scene==2);assert(studio_scene_apply_change());
-    assert(s->background_texture && studio_texture_count==5);
+    assert(s->background_texture && studio_texture_count==6);
     for(i=10;i<=14;i++) assert(object(s,(unsigned int)i)->solid && object(s,(unsigned int)i)->alive &&
         (object(s,(unsigned int)i)->render_flags&PSX_RENDER_HIDDEN));
     assert(object(s,200)->follow_target==0 && s->projection==1);
@@ -76,9 +77,53 @@ int main(void)
         for(i=0;i<3;i++) shot(s);
         assert(!enemy->solid && enemy->alive);
     }
-    psx_scene_update(s,0);assert(s->hud.style==PSX_HUD_MENU && strstr(s->hud.message,"ATRIUM CLEARED"));
+    psx_scene_update(s,0);assert(s->hud.style==PSX_HUD_COMBAT);
     psx_scene_update(s,2048UL);assert(s->pending_scene==2);assert(studio_scene_apply_change());
     assert(s->hud.health==100 && s->hud.ammo==36 && object(s,20)->solid && object(s,2)->mesh==rest);
+    /* Blood starts only on impact, stays at the hit location, and expires. */
+    s=isolated();p=object(s,2);enemy=object(s,20);
+    p->position[0]=0;p->position[2]=100;enemy->position[0]=0;enemy->position[2]=0;
+    assert(!object(s,81)->alive);
+    psx_scene_update(s,8UL|64UL);
+    for(i=0;i<12 && !object(s,81)->alive;i++) psx_scene_update(s,8UL);
+    assert(object(s,81)->alive && object(s,81)->kind==PSX_OBJECT_BILLBOARD);
+    assert(object(s,81)->position[1]==52 && !object(s,82)->alive);
+    x=object(s,81)->position[0];z=object(s,81)->position[2];
+    for(i=0;i<20;i++) psx_scene_update(s,8UL);
+    assert(!object(s,81)->alive && object(s,81)->position[0]==x && object(s,81)->position[2]==z);
+    /* Editable trigger transform, bounds, offset and destination drive travel.
+     * Other actors overlapping it must not activate the engine's default action. */
+    s=isolated();p=object(s,2);enemy=object(s,30);
+    assert(enemy->alive && !enemy->solid && !enemy->collision_action &&
+        (enemy->render_flags&PSX_RENDER_HIDDEN) && enemy->target_scene==3);
+    object(s,20)->position[0]=enemy->position[0];object(s,20)->position[2]=enemy->position[2];
+    psx_scene_update(s,0);assert(!s->pending_scene);
+    enemy->position[0]=60;enemy->position[2]=-70;
+    enemy->half_size[0]=5;enemy->half_size[2]=10;enemy->collider_offset[0]=20;
+    p->position[0]=0;p->position[2]=-325;psx_scene_update(s,0);assert(!s->pending_scene);
+    p->position[0]=60;p->position[2]=-70;psx_scene_update(s,0);assert(!s->pending_scene);
+    enemy->target_scene=1;p->position[0]=80;
+    psx_scene_update(s,0);assert(s->pending_scene==1);
+    assert(studio_scene_apply_change() && s->scene_id==1);
+    /* Door proximity, return path, no automatic bounce, and persistent combat. */
+    s=isolated();p=object(s,2);enemy=object(s,20);
+    enemy->position[0]=0;enemy->position[2]=-10;
+    for(i=0;i<3;i++) shot(s);
+    assert(!enemy->solid);s->hud.health=80;
+    p->position[0]=100;p->position[2]=-325;psx_scene_update(s,0);assert(!s->pending_scene);
+    p->position[0]=0;p->position[2]=-210;p->rotation[1]=0;
+    for(i=0;i<70 && !s->pending_scene;i++) psx_scene_update(s,4096UL);
+    assert(s->pending_scene==3); /* Door remains reachable through the rear wall. */
+    assert(studio_scene_apply_change());assert(s->scene_id==3 && s->background_texture);
+    assert(s->hud.health==80 && s->hud.ammo==33 && object(s,20)->solid);
+    /* Room 3 has its own patients, not the atrium corpse state. */
+    p=object(s,2);assert(p->position[2]==-330 && p->rotation[1]==2048);
+    psx_scene_update(s,0);assert(!s->pending_scene);
+    p->position[2]=-385;psx_scene_update(s,0);assert(s->pending_scene==2);
+    assert(studio_scene_apply_change());assert(s->scene_id==2 && !object(s,20)->solid);
+    assert(object(s,20)->mesh==object(s,62)->mesh && s->hud.health==80 && s->hud.ammo==33);
+    psx_scene_update(s,2048UL);assert(studio_scene_apply_change());
+    assert(s->scene_id==2 && s->hud.health==100 && s->hud.ammo==36 && object(s,20)->solid);
     s->hud.health=0;psx_scene_update(s,0);assert(strstr(s->hud.message,"YOU ARE DOWN"));
     psx_scene_update(s,2048UL);assert(studio_scene_apply_change());assert(s->hud.health==100);
     return 0;

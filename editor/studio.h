@@ -6,7 +6,7 @@
 #include <epoxy/gl.h>
 #include "../runtime/camera.h"
 
-#define STUDIO_APP_VERSION "0.5.1"
+#define STUDIO_APP_VERSION "0.5.2"
 #define STUDIO_VERSION 3
 #define STUDIO_MAX_SCENES 16
 #define STUDIO_MAX_OBJECTS 512
