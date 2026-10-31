@@ -6,6 +6,7 @@ import math
 from pathlib import Path
 from generate_shadow_models import Mesh, box, bone, tile
 from PIL import Image, ImageDraw
+from generate_shadow_village import place_exit_checkpoints
 ROOT=Path(__file__).resolve().parents[1]
 DATA=ROOT/'examples/shadow-ops_psx_data'
 
@@ -70,7 +71,7 @@ def generate():
         objects[:]=[o for o in objects if o['id']!=50] # Existing checkpoint format supports sectors 1/2.
         for o in objects:
             if o['id']==40:o['target_scene']=3 if sid==4 else 4
-            if o['id']==41:o['target_scene']=5 if sid==4 else 0
+            if o['id']==41:o['target_scene']=5 if sid==4 else (6 if any(level['id']==6 for level in project['scenes']) else 0)
             # Shot UVs sample the original bright effect texels, not scenery.
             if o.get('texture')=='atlas.png' and o.get('asset') not in ('tracer.obj','muzzle.obj'):
                 o['texture']='industry.png'
@@ -103,6 +104,6 @@ def generate():
     # Warehouse's extraction passage now leads into the added campaign sectors.
     for o in base['data']['objects']:
         if o['id']==41:o['target_scene']=4
-    project['objects']=copy.deepcopy(next(s for s in project['scenes'] if s['id']==project['active_scene'])['data']['objects'])
+    place_exit_checkpoints(project)
     p.write_text(json.dumps(project,indent=2)+'\n')
 if __name__=='__main__':generate()

@@ -617,6 +617,18 @@ static void sound_assets(void)
     g_assert_true(g_file_set_contents(sample,vag,size,&error));g_assert_no_error(error);
     g_free(o->module);o->module=g_strdup("logic.c");
     g_assert_true(project_export(&p,destination,&error));g_assert_no_error(error);
+    /* Exercise external sample linkage and sharing without example assets. */
+    g_assert_nonnull(project_scene_add(&p,"Shared sample"));
+    Object *second=project_add(&p,OBJECT_MESH);g_free(second->module);second->module=g_strdup("logic.c");
+    compile_export(&p,
+        "#include \"scene.h\"\n#include <assert.h>\n"
+        "int main(void){PsxScene *s;const unsigned char *bytes;PsxSound *bank;"
+        "s=studio_scene_load_id(1);assert(s && s->sound_count==1);"
+        "bytes=s->sounds[0].data;bank=s->sounds;assert(bytes[33]==1);"
+        "s=studio_scene_load_id(2);assert(s && s->sound_count==1);"
+        "assert(s->sounds!=bank && s->sounds[0].data==bytes);return 0;}\n",
+        "shared-sample-linkage");
+    g_assert_true(project_scene_switch(&p,1,&error));g_assert_no_error(error);
     vag[65]=4;vag[size-15]=3; /* Full-sample music loop. */
     g_assert_true(g_file_set_contents(sample,vag,size,&error));g_assert_no_error(error);
     g_assert_true(project_export(&p,destination,&error));g_assert_no_error(error);
@@ -639,8 +651,8 @@ static void shadow_ops_example(void)
     }
     Project p;project_init(&p);GError *error=NULL;char *harness=NULL;
     g_assert_true(project_load(&p,"examples/shadow-ops.psx",&error));g_assert_no_error(error);
-    g_assert_cmpuint(p.scenes->len,==,5);
-    g_assert_cmpuint(p.scene_id,==,1);g_assert_cmpuint(p.startup_scene,==,1);
+    g_assert_cmpuint(p.scenes->len,>=,5);g_assert_cmpuint(p.scenes->len,<=,6);
+    g_assert_nonnull(project_scene_find(&p,p.scene_id));g_assert_cmpuint(p.startup_scene,==,1);
     g_assert_cmpuint(((Scene*)g_ptr_array_index(p.scenes,0))->id,==,1);
     /* Industrial scenery must not replace the bright shot-effect atlas. */
     for(guint i=0;i<p.scenes->len;i++) {

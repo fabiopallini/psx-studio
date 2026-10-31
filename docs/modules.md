@@ -218,15 +218,18 @@ very wide projected edges conservatively bypass this rejection.
 `PSX_HUD_HEALTH_ONLY` shows only the HP bar. `PSX_HUD_COMBAT` shows compact HP,
 a pistol icon with a cyan frame and tiny ammunition digits.
 `PSX_HUD_MENU` hides the bar and
-prints `hud.message` as a multiline menu/prompt. Keep menu strings static so
+prints `hud.message` as a multiline menu/prompt inside an opaque dark panel
+with a light border. The panel follows the visible text bounds in the 38×28
+font grid, keeping prompts readable over bright scenery. Keep menu strings static so
 render snapshots can safely reference them. Modules own menu input and pausing.
 Health-only and combat styles suppress diagnostic text and the FPS overlay;
 style 0 retains the standard text/status display.
 
 The initial checkpoint backend is for Shadow Ops sector starts: set
-`scene->checkpoint.operation` to `PSX_CHECKPOINT_SAVE` with legacy sector code `scene_id` 1 (yard) or 2 (warehouse),
-independent of their current Scene IDs; the game maps these to Scenes 2/3,
-or `PSX_CHECKPOINT_LOAD`. The console handles the request at GPU idle in the
+`scene->checkpoint.operation` to `PSX_CHECKPOINT_SAVE` with stable sector code `scene_id` 1–5 (yard through Alpine Ruins),
+independent of their current Scene IDs; the game maps these to Scenes 2–6.
+Use `PSX_CHECKPOINT_LOAD` to read a checkpoint. The original codes 1/2 retain
+their meaning and existing cards remain valid. The console handles requests at GPU idle in the
 main thread, clears operation and returns status 1/-1; a successful load supplies
 the stored Scene ID. The module validates it and requests a normal Scene change.
 BIOS card I/O is a deliberate pause; the engine resets timing and waits for input

@@ -82,6 +82,26 @@ class BuildTests(unittest.TestCase):
         self.assertIn('scene.c', (output / 'src/sources.rsp').read_text())
         self.assertTrue((output / 'src/camera.h').read_text().startswith('#define PSX_RUNTIME_FIXED_ONLY 1\n'))
 
+    def test_renderer_buffers_fit_largest_scene(self):
+        small = dict(self.data)
+        large = dict(self.data)
+        large['objects'] = [dict(self.data['objects'][0], id=i + 1) for i in range(37)]
+        self.data = dict(self.data, version=3, active_scene=1, startup_scene=1,
+                         scenes=[{'id': 1, 'name': 'Small', 'data': small},
+                                 {'id': 2, 'name': 'Large', 'data': large}])
+        self.save()
+        self.prepare()
+        output = self.output()
+        header = (output / 'src/psx.h').read_text()
+        self.assertIn('#define STUDIO_OBJECT_LIMIT 37', header)
+        self.assertIn('#define STUDIO_DRAW_LIMIT 512', header)
+        self.assertEqual(json.loads((output / 'src/assets.json').read_text())['max_objects'], 37)
+        # Rebuilding after removing a Scene must reclaim its buffer allocation.
+        self.data['scenes'].pop()
+        self.save()
+        self.prepare()
+        self.assertIn('#define STUDIO_OBJECT_LIMIT 1', (output / 'src/psx.h').read_text())
+
     def test_long_module_list_uses_ccpsx_control_file(self):
         data = self.project.with_name('game_psx_data')
         data.mkdir()

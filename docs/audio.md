@@ -41,7 +41,9 @@ module audio. There is no inspector sound assignment yet: use the imported VAG's
 filename in the module declaration and playback call.
 
 Export validates the referenced one-shot or full-sample looping VAGs and embeds their ADPCM data in the
-Scene's generated C, aligned and padded to 64-byte DMA units. The sample therefore
+generated C data files, aligned and padded to 64-byte DMA units. Each unique
+sample has its own compilation unit to keep the legacy Psy-Q assembler input
+small; Scene tables reference these arrays through external declarations. The sample therefore
 travels inside the executable on the CD; no separate VAG CD read is needed. Only
 referenced samples are included. Identical immutable ADPCM arrays can be shared
 across Scenes; each Scene retains its own mutable bank metadata. Import alone does not add a

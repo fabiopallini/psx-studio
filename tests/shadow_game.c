@@ -4,6 +4,7 @@
 #include <string.h>
 
 static int player_sounds,enemy_sounds;
+static int integrated_alpine;
 static int record_sound(PsxScene *scene,const char *name,int volume,int pan)
 {
     (void)scene;assert(!strcmp(name,"shot.vag"));assert(pan>=-4096 && pan<=4096);
@@ -323,6 +324,162 @@ static void secured_passages(void)
     assert(scene->pending_scene==2 && player->position[2]>270);assert(studio_scene_apply_change());
     assert(object(scene,42)->solid && object(scene,42)->position[1]==closed);
 }
+/* Check continuous routes through the extended village's real AABB layout.
+ * Ten-unit cells are smaller than the player diameter and corridor clearances. */
+static void village_layout(void)
+{
+    static unsigned char seen[131*181];
+    static unsigned short queue[131*181];
+    static const int dx[4]={1,-1,0,0},dz[4]={0,0,1,-1};
+    PsxScene *scene;
+    PsxObject *player,*cover;
+    int head,tail,cell,ix,iz,nx,nz,n,blocked,i;
+    unsigned int j;
+    long x,z;
+    if(!integrated_alpine) return;
+    scene=studio_scene_load_id(6);player=object(scene,2);
+    memset(seen,0,sizeof(seen));head=tail=0;
+    cell=(int)((player->position[2]+900)/10)*131+(int)((player->position[0]+650)/10);
+    seen[cell]=1;queue[tail++]=(unsigned short)cell;
+    while(head<tail) {
+        cell=queue[head++];ix=cell%131;iz=cell/131;
+        for(n=0;n<4;n++) {
+            nx=ix+dx[n];nz=iz+dz[n];
+            if(nx<0 || nx>=131 || nz<0 || nz>=181) continue;
+            cell=nz*131+nx;if(seen[cell]) continue;
+            x=nx*10-650;z=nz*10-900;blocked=0;
+            for(j=0;j<scene->count;j++) {
+                cover=&scene->objects[j];
+                if(!cover->solid || !((cover->id>=10 && cover->id<=19) ||
+                    (cover->id>=400 && cover->id<=499))) continue;
+                if(x>cover->position[0]-cover->half_size[0]-10 &&
+                   x<cover->position[0]+cover->half_size[0]+10 &&
+                   z>cover->position[2]-cover->half_size[2]-10 &&
+                   z<cover->position[2]+cover->half_size[2]+10) {blocked=1;break;}
+            }
+            if(!blocked) {seen[cell]=1;queue[tail++]=(unsigned short)cell;}
+        }
+    }
+    for(i=20;i<=41;i++) if(i==20 || i==21 || (i>=30 && i<=33) || i==40 || i==41) {
+        cover=object(scene,(unsigned int)i);
+        cell=(int)((cover->position[2]+900)/10)*131+(int)((cover->position[0]+650)/10);
+        assert(seen[cell]);
+    }
+    assert(seen[((520+900)/10)*131+(-80+650)/10]);
+    assert(seen[((-410+900)/10)*131+(-150+650)/10]);
+    /* New building IDs must shield motion and swept shots like legacy cover. */
+    object(scene,20)->alive=object(scene,21)->alive=0;cover=object(scene,400);
+    player->position[0]=cover->position[0]-cover->half_size[0]-30;
+    player->position[2]=cover->position[2];
+    for(i=0;i<30;i++) psx_scene_update(scene,8192UL);
+    assert(player->position[0]<=cover->position[0]-cover->half_size[0]-player->half_size[0]);
+    aim_fire(scene,8192UL);
+    for(i=0;i<20;i++) psx_scene_update(scene,0);
+    assert(!object(scene,100)->alive);
+    /* Tire sidewalls now have a distinct inner and outer tread surface. */
+    cover=object(scene,14);ix=iz=0;
+    for(j=0;j<cover->mesh->count;j++) {
+        const PsxVertex *v;
+        v=&cover->mesh->vertices[j];
+        if(v->p[1]==-6 && v->p[2]==35) {
+            if(v->p[0]==18) ix=1;
+            if(v->p[0]==26) iz=1;
+        }
+    }
+    assert(ix && iz && cover->half_size[0]>=26);
+}
+/* The larger map must not delete shots at the old +/-320, +/-280 limits. */
+static void village_projectiles(void)
+{
+    static const long starts[4][2]={{400,0},{-450,0},{-80,650},{-150,-600}};
+    static const long directions[4]={4096UL,4096UL,4096UL,16384UL};
+    PsxScene *scene;
+    PsxObject *player,*guard,*bullet;
+    int test,i;
+    if(!integrated_alpine) return;
+    for(test=0;test<4;test++) {
+        scene=studio_scene_load_id(6);player=object(scene,2);guard=object(scene,20);
+        object(scene,21)->alive=0;
+        player->position[0]=starts[test][0];player->position[2]=starts[test][1];
+        guard->position[0]=player->position[0];
+        guard->position[2]=player->position[2]+(test==3?100:-100);
+        aim_fire(scene,(unsigned long)directions[test]);bullet=object(scene,100);
+        assert(bullet->alive && (bullet->render_flags&PSX_RENDER_EMISSIVE));
+        assert(bullet->position[1]==33);
+        assert(object(scene,1)->render_flags&PSX_RENDER_BACKGROUND);
+        for(i=0;i<22;i++) psx_scene_update(scene,0);
+        assert(guard->alive && !bullet->alive);
+        aim_fire(scene,(unsigned long)directions[test]);
+        for(i=0;i<22;i++) psx_scene_update(scene,0);
+        assert(!guard->alive);
+    }
+    /* Empty-space shots still expire through the bounded lifetime. */
+    scene=studio_scene_load_id(6);player=object(scene,2);
+    object(scene,20)->alive=object(scene,21)->alive=0;remove_walls(scene);
+    for(i=0;i<(int)scene->count;i++)
+        if(scene->objects[i].id>=400 && scene->objects[i].id<=499) scene->objects[i].alive=0;
+    player->position[0]=400;player->position[2]=0;
+    aim_fire(scene,8192UL);bullet=object(scene,100);assert(bullet->alive);
+    for(i=0;i<92;i++) psx_scene_update(scene,0);
+    assert(!bullet->alive);
+}
+static void exit_checkpoints(void)
+{
+    PsxScene *scene;
+    PsxObject *player,*point,*gate;
+    unsigned int sid,id,expected;
+    int slot;
+    unsigned int j;
+    PsxObject probe;
+    if(!integrated_alpine) return;
+    for(sid=2;sid<=6;sid++) for(slot=0;slot<(sid==2?1:2);slot++) {
+        scene=studio_scene_load_id(sid);player=object(scene,2);
+        id=50U+(unsigned int)slot;point=object(scene,id);
+        gate=object(scene,sid==2?40U:slot?40U:41U);
+        assert(point->alive && point->target_scene==(gate->target_scene?gate->target_scene:sid));
+        assert(point->position[0]-gate->position[0]==(slot?-30:30));
+        assert(point->position[2]-gate->position[2]==(slot?-67:67));
+        for(j=0;j<scene->count;j++) {
+            PsxObject *obstacle;
+            obstacle=&scene->objects[j];
+            if(obstacle->solid) assert(!psx_objects_overlap(point,obstacle));
+            /* Industrial vessels are decorative, with a 17-unit mesh radius
+             * instead of authored solid bounds. Keep the save icon visible. */
+            if((sid==4 || sid==5) && obstacle->id>=300 && obstacle->id<=303) {
+                probe=*obstacle;probe.half_size[0]=probe.half_size[2]=17;probe.half_size[1]=30;
+                assert(!psx_objects_overlap(point,&probe));
+            }
+        }
+        psx_scene_update(scene,0);assert(scene->hud.style==PSX_HUD_COMBAT);
+        /* Living guards cannot be bypassed by saving the exit destination. */
+        at(player,point);psx_scene_update(scene,0);
+        assert(scene->hud.style==PSX_HUD_MENU && strstr(scene->hud.message,"THIS SECTOR"));
+        psx_scene_update(scene,4096UL);psx_scene_update(scene,0);psx_scene_update(scene,64UL);
+        assert(scene->checkpoint.operation==PSX_CHECKPOINT_SAVE && scene->checkpoint.scene_id==sid-1);
+        /* Once cleared, both directions save their actual destination. */
+        scene=studio_scene_load_id(sid);player=object(scene,2);point=object(scene,id);
+        object(scene,20)->alive=object(scene,21)->alive=0;
+        at(player,point);psx_scene_update(scene,0);
+        expected=point->target_scene?point->target_scene:sid;
+        assert(strstr(scene->hud.message,expected==sid?"THIS SECTOR":"DESTINATION"));
+        psx_scene_update(scene,64UL); /* No is the default. */
+        assert(!scene->checkpoint.operation && scene->hud.style==PSX_HUD_COMBAT);
+        player->position[0]=player->position[2]=0;psx_scene_update(scene,0);
+        at(player,point);psx_scene_update(scene,0);psx_scene_update(scene,4096UL);
+        psx_scene_update(scene,0);psx_scene_update(scene,64UL);
+        assert(scene->checkpoint.operation==PSX_CHECKPOINT_SAVE && scene->checkpoint.scene_id==expected-1);
+        scene->checkpoint.operation=0;scene->checkpoint.status=1;psx_scene_update(scene,0);
+        assert(strstr(scene->hud.message,"CHECKPOINT SAVED"));
+        psx_scene_update(scene,64UL);psx_scene_update(scene,0);
+        assert(scene->hud.style==PSX_HUD_COMBAT && !scene->checkpoint.operation);
+        scene=studio_scene_load_id(1);psx_scene_update(scene,16384UL);psx_scene_update(scene,64UL);
+        scene->checkpoint.operation=0;scene->checkpoint.status=1;scene->checkpoint.scene_id=expected-1;
+        psx_scene_update(scene,0);assert(scene->pending_scene==expected);
+    }
+    scene=studio_scene_load_id(1);psx_scene_update(scene,16384UL);psx_scene_update(scene,64UL);
+    scene->checkpoint.operation=0;scene->checkpoint.status=1;scene->checkpoint.scene_id=6;
+    psx_scene_update(scene,0);assert(!scene->pending_scene && strstr(scene->hud.message,"NO VALID CHECKPOINT"));
+}
 static void grenadier_passages(void)
 {
     PsxScene *scene;
@@ -331,7 +488,7 @@ static void grenadier_passages(void)
     unsigned int sid,j;
     int g,shot,step;
     long closed;
-    for(sid=4;sid<=5;sid++) {
+    for(sid=4;sid<=(integrated_alpine?6U:5U);sid++) {
         scene=studio_scene_load_id(sid);player=object(scene,2);
         door=object(scene,44);closed=door->position[1];
         /* Check the authored spawn and complete patrol footprint against real
@@ -343,7 +500,7 @@ static void grenadier_passages(void)
             for(j=0;j<scene->count;j++) {
                 PsxObject *wall;
                 wall=&scene->objects[j];
-                if(wall->id>=10 && wall->id<=19 && wall->solid)
+                if(((wall->id>=10 && wall->id<=19) || (wall->id>=400 && wall->id<=499)) && wall->solid)
                     assert(!psx_objects_overlap(&probe,wall));
             }
         }
@@ -363,9 +520,9 @@ static void grenadier_passages(void)
         for(step=0;step<18;step++) psx_scene_update(scene,0);
         assert(!door->solid && door->position[1]==closed+72);
         assert(!object(scene,42)->solid);
-        player->position[0]=220;player->position[2]=-210;
+        player->position[0]=door->position[0];player->position[2]=door->position[2]+40;
         for(step=0;step<50 && !scene->pending_scene;step++) psx_scene_update(scene,4096UL);
-        if(sid==4) assert(scene->pending_scene==5);
+        if(sid==4 || (sid==5 && integrated_alpine)) assert(scene->pending_scene==sid+1);
         else assert(strstr(scene->hud.message,"MISSION COMPLETE"));
     }
 }
@@ -522,6 +679,7 @@ int main(void)
     const unsigned long aim_keys[8]={4096UL,4096UL|8192UL,8192UL,8192UL|16384UL,
         16384UL,16384UL|32768UL,32768UL,32768UL|4096UL};
     const long aim_angles[8]={0,3584,3072,2560,2048,1536,1024,512};
+    integrated_alpine=studio_scene_load_id(6)!=0;
     visual_feedback();action_feedback();running();stealth();pistol_hit_reaction();controls();
     scene=studio_scene_load();assert(!scene->sound_count && !scene->play_sound);
 
@@ -619,12 +777,27 @@ int main(void)
     object(scene,20)->alive=object(scene,21)->alive=0;
     for(i=0;i<18;i++) psx_scene_update(scene,0);
     at(object(scene,2),object(scene,41));psx_scene_update(scene,0);
+    if(integrated_alpine) {
+        assert(scene->pending_scene==6);assert(studio_scene_apply_change());
+        assert(scene->scene_id==6 && psx_scene_find(scene,50) && psx_scene_find(scene,51));
+        object(scene,20)->alive=object(scene,21)->alive=0;
+        for(i=0;i<18;i++) psx_scene_update(scene,0);
+        at(object(scene,2),object(scene,40));psx_scene_update(scene,0);
+        assert(scene->pending_scene==5);assert(studio_scene_apply_change());
+        object(scene,20)->alive=object(scene,21)->alive=0;
+        for(i=0;i<18;i++) psx_scene_update(scene,0);
+        at(object(scene,2),object(scene,41));psx_scene_update(scene,0);
+        assert(scene->pending_scene==6);assert(studio_scene_apply_change());
+        object(scene,20)->alive=object(scene,21)->alive=0;
+        for(i=0;i<18;i++) psx_scene_update(scene,0);
+        at(object(scene,2),object(scene,41));psx_scene_update(scene,0);
+    }
     assert(strstr(scene->hud.message,"MISSION COMPLETE") && scene->hud.style==PSX_HUD_MENU);
-    psx_scene_update(scene,2048UL);assert(scene->pending_scene==5);assert(studio_scene_apply_change());
+    psx_scene_update(scene,2048UL);assert(scene->pending_scene==(integrated_alpine?6U:5U));assert(studio_scene_apply_change());
     assert(scene->hud.health==100 && object(scene,20)->alive && object(scene,30)->alive);
     scene->hud.health=0;psx_scene_update(scene,0);assert(strstr(scene->hud.message,"YOU ARE DOWN") && scene->hud.style==PSX_HUD_MENU);
     psx_scene_update(scene,2048UL);assert(studio_scene_apply_change());assert(scene->hud.health==100);
-    cancel_aim();secured_passages();grenadier_passages();movement_speed();timed_game();grenade_combat();
+    cancel_aim();secured_passages();village_layout();village_projectiles();exit_checkpoints();grenadier_passages();movement_speed();timed_game();grenade_combat();
     /* Existing card sector codes retain their meaning after menu renumbering. */
     for(i=1;i<=2;i++) {
         scene=studio_scene_load_id(1);assert(scene && scene->hud.style==PSX_HUD_MENU);

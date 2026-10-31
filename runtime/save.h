@@ -3,6 +3,8 @@
 /* Single-block PS1 card file: 128-byte header, 128-byte 4-bit icon, payload.
  * The payload is byte-encoded, independent of host long width/endianness. */
 #include <string.h>
+/* Stable sector codes 1..5 map to campaign Scenes 2..6. */
+#define PSX_CHECKPOINT_SECTORS 5
 static unsigned int psx_checkpoint_crc(const unsigned char *p,unsigned int count)
 {
     unsigned int crc,i;
@@ -33,6 +35,6 @@ static unsigned int psx_checkpoint_decode(const unsigned char *data)
     if(data[0]!='S' || data[1]!='C' || memcmp(data+256,"SHDWCP01",8)) return 0;
     crc=psx_checkpoint_crc(data+256,9);
     if(data[265]!=(unsigned char)crc || data[266]!=(unsigned char)(crc>>8)) return 0;
-    return data[264]==1 || data[264]==2?data[264]:0;
+    return data[264]>=1 && data[264]<=PSX_CHECKPOINT_SECTORS?data[264]:0;
 }
 #endif

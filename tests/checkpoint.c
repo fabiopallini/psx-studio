@@ -9,7 +9,10 @@ int main(void)
     for(i=256;i<267;i++) {
         data[i]^=1;assert(!psx_checkpoint_decode(data));data[i]^=1;
     }
-    psx_checkpoint_encode(data,3);assert(!psx_checkpoint_decode(data));
+    for(i=1;i<=5;i++) {psx_checkpoint_encode(data,i);assert(psx_checkpoint_decode(data)==i);}
+    psx_checkpoint_encode(data,0);assert(!psx_checkpoint_decode(data));
+    psx_checkpoint_encode(data,6);assert(!psx_checkpoint_decode(data));
+    psx_checkpoint_encode(data,255);assert(!psx_checkpoint_decode(data));
     memset(data,0,sizeof(data));assert(!psx_checkpoint_decode(data));
     return 0;
 }

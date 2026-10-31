@@ -10,6 +10,8 @@
 #define STUDIO_SCREEN_WIDTH 320
 #define STUDIO_SCREEN_HEIGHT 256
 #define STUDIO_DRAW_LIMIT 512
+/* Native builds specialize object work buffers to the largest authored Scene. */
+#define STUDIO_OBJECT_LIMIT 512
 
 extern unsigned long studio_pad;
 void psInit(void);

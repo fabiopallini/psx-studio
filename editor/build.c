@@ -321,6 +321,12 @@ static gboolean prepare_project(Project *project,const char *root,const char *ou
     if(parser) {
         JsonObject *manifest=json_node_get_object(json_parser_get_root(parser));
         JsonArray *modules=json_object_get_array_member(manifest,"modules"),*textures=json_object_get_array_member(manifest,"textures");
+        gint64 max_objects=json_object_has_member(manifest,"max_objects")?json_object_get_int_member(manifest,"max_objects"):0;
+        if(max_objects<1 || max_objects>512) ok=failure(error,"Invalid exported Scene object capacity.");
+        if(ok) {
+            char *capacity=g_strdup_printf("#define STUDIO_OBJECT_LIMIT %u",(guint)max_objects);
+            ok=rewrite(output,"src/psx.h","#define STUDIO_OBJECT_LIMIT 512",capacity,error);g_free(capacity);
+        }
         GString *sources=g_string_new("main.c scene.c object.c");
         for(guint i=0;i<json_array_get_length(modules);i++) {g_string_append_c(sources,' ');g_string_append(sources,json_array_get_string_element(modules,i));}
         /* DOS command tails are limited to 126 bytes. CCPSX control files
@@ -389,11 +395,11 @@ static gboolean run_dosbox(const Project *project,const char *sdk,const char *ou
     g_ptr_array_add(args,NULL);GSubprocessLauncher *launcher=g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_STDOUT_PIPE|G_SUBPROCESS_FLAGS_STDERR_MERGE);
     GSubprocess *process=g_subprocess_launcher_spawnv(launcher,(const char *const*)args->pdata,error);
     g_object_unref(launcher);g_ptr_array_unref(args);g_free(config);if(!process) {g_free(log);return FALSE;}
-    DosWait wait={g_main_loop_new(NULL,FALSE),process,NULL,log,FALSE,FALSE};guint timer=g_timeout_add_seconds(240,dos_timeout,&wait);
+    DosWait wait={g_main_loop_new(NULL,FALSE),process,NULL,log,FALSE,FALSE};guint timer=g_timeout_add_seconds(600,dos_timeout,&wait);
     g_subprocess_communicate_async(process,NULL,NULL,dos_finished,&wait);g_main_loop_run(wait.loop);
     if(!wait.timed_out) g_source_remove(timer);
     g_main_loop_unref(wait.loop);g_object_unref(process);g_free(log);
-    if(wait.timed_out) {g_clear_error(&wait.error);return failure(error,"DOSBox exceeded the 240 second build timeout.");}
+    if(wait.timed_out) {g_clear_error(&wait.error);return failure(error,"DOSBox exceeded the 600 second build timeout.");}
     if(wait.error) g_propagate_error(error,wait.error);
     return wait.ok;
 }

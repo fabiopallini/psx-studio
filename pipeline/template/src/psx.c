@@ -13,14 +13,14 @@
 static DISPENV display[2];
 static DRAWENV drawing[2];
 static unsigned long ordering[2][STUDIO_DRAW_LIMIT];
-static LINE_F2 lines[2][STUDIO_DRAW_LIMIT][24];
+static LINE_F2 lines[2][STUDIO_OBJECT_LIMIT][24];
 static union {
     POLY_FT3 textured;
     struct { POLY_F3 primitive; DR_TPAGE mode; } flat;
 } polygons[2][8192];
 static unsigned long tim_buffer[34000];
 static TILE hud_tiles[2][160];
-static PsxProjectionCache cache[STUDIO_DRAW_LIMIT];
+static PsxProjectionCache cache[STUDIO_OBJECT_LIMIT];
 static unsigned short shared_vertices[12288];
 static unsigned short position_hash[PSX_POSITION_HASH_SIZE];
 static long world_vertices[12288][3]; /* Rotated/scaled offsets, without translation. */
@@ -30,7 +30,7 @@ static unsigned int polygon_count;
 static PsxScene *current_scene;
 static PsxScene *simulation_scene;
 static PsxScene frame_scene;
-static PsxObject frame_objects[STUDIO_DRAW_LIMIT];
+static PsxObject frame_objects[STUDIO_OBJECT_LIMIT];
 static PsxFrameQueue frames;
 static unsigned long sampled_frames;
 static int input_wait;
@@ -137,9 +137,9 @@ int psSetScene(PsxScene *scene,PsxTexture *images,unsigned int count)
     sampled_frames=frames.count;
     frame_scene=*scene;frame_scene.objects=frame_objects;current_scene=&frame_scene;
     textures=images;texture_count=count;font_enabled=1;
-    if(scene->count>STUDIO_DRAW_LIMIT) return 0;
+    if(scene->count>STUDIO_OBJECT_LIMIT) return 0;
     start=0;
-    for(i=0;i<scene->count && i<STUDIO_DRAW_LIMIT;i++) {
+    for(i=0;i<scene->count && i<STUDIO_OBJECT_LIMIT;i++) {
         cache[i].valid=0;cache[i].mesh=scene->objects[i].mesh;cache[i].start=start;cache[i].count=scene->objects[i].mesh?scene->objects[i].mesh->count:0;
         if(cache[i].count>12288-start) return 0;
         if(scene->objects[i].mesh) psx_share_positions(scene->objects[i].mesh,shared_vertices,start,position_hash);
@@ -504,7 +504,7 @@ static void draw_box(const PsxObject *object,unsigned int index,int collider)
 void psDrawObject(const PsxObject *object,unsigned int index)
 {
     int k;
-    if(!object->alive || object->kind==PSX_OBJECT_CAMERA || index>=STUDIO_DRAW_LIMIT) return;
+    if(!object->alive || object->kind==PSX_OBJECT_CAMERA || index>=STUDIO_OBJECT_LIMIT) return;
     /* Snapshot camera angles persist across objects and render yields. */
     if(!camera_angles_valid || cached_yaw!=yaw()) {
         cached_yaw=yaw();camera_cy=rcos(cached_yaw);camera_sy=rsin(cached_yaw);
@@ -590,13 +590,42 @@ static void hud_weapons(void)
                 hud_rect(&next,131+n*4+column,10+row,1,1,230,235,230);
     }
 }
+/* Opaque, bordered dialog balloon. Font cells are 8x8 at screen (8,8),
+ * with a 38-column / 28-row viewport. Derive the panel from visible text. */
+static void hud_dialog(const char *message)
+{
+    int column,row,left,right,top,bottom,x,y,w,h,next,i;
+    unsigned char c;
+    if(!message) return;
+    column=row=right=bottom=0;left=38;top=28;
+    for(i=0;message[i] && i<512;i++) {
+        c=(unsigned char)message[i];
+        if(c=='\n') {column=0;row++;continue;}
+        if(column>=38) {column=0;row++;}
+        if(row>=28) break;
+        if(c!=' ' && c!='\r' && c!='\t') {
+            if(column<left) left=column;if(column>right) right=column;
+            if(row<top) top=row;if(row>bottom) bottom=row;
+        }
+        column++;
+    }
+    if(left>right || top>bottom) return;
+    x=left*8;y=top*8;w=(right-left+3)*8;h=(bottom-top+3)*8;
+    if(x+w>316) w=316-x;if(y+h>236) h=236-y;
+    next=0;
+    /* Reverse OT order: shadow, light border, dark fill, then FntFlush text. */
+    hud_rect(&next,x+2,y+2,w-4,h-4,18,25,34);
+    hud_rect(&next,x,y,w,h,168,188,202);
+    hud_rect(&next,x+3,y+3,w,h,4,8,12);
+}
 void psDrawHud(void)
 {
     TILE *tile;
     int health,maximum,width,i,combat;
     const int x[4]={0,28,30,30},y[4]={0,6,8,8};
     const int w[4]={320,98,94,94},h[4]={27,12,8,8};
-    if(!current_scene || !current_scene->hud.enabled || current_scene->hud.style==PSX_HUD_MENU) return;
+    if(!current_scene || !current_scene->hud.enabled) return;
+    if(current_scene->hud.style==PSX_HUD_MENU) {hud_dialog(current_scene->hud.message);return;}
     combat=current_scene->hud.style==PSX_HUD_COMBAT;
     maximum=current_scene->hud.max_health;
     if(maximum<1) maximum=1;if(maximum>32767) maximum=32767;

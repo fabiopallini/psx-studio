@@ -23,7 +23,7 @@ void psCheckpoint(PsxCheckpoint *request)
             if(level) {request->scene_id=level;request->status=1;}
         }
     } else if(request->operation==PSX_CHECKPOINT_SAVE &&
-              (request->scene_id==1 || request->scene_id==2)) {
+              (request->scene_id>=1 && request->scene_id<=PSX_CHECKPOINT_SECTORS)) {
         file=open(name,O_WRONLY);
         if(file<0) {
             file=open(name,O_CREAT|0x10000L);

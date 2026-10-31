@@ -42,8 +42,14 @@ Save As copies the accompanying asset folder. References are relative to
 
 Export writes C89 Scene defaults, mesh tables, renamed modules and sound banks.
 Identical immutable geometry and ADPCM bytes can be shared across Scenes;
-live objects and audio-bank metadata remain separate. All geometry and module
-code are resident in the executable. Scene textures are loaded from CD and reuse
+live objects and audio-bank metadata remain separate. Shared ADPCM arrays are
+compiled in separate generated `Mnnn.C` files, listed alongside logic wrappers
+in the export manifest. This keeps the legacy Psy-Q assembler from processing
+all samples together with the combined Scene tables. All geometry and module
+code are resident in the executable. The export manifest records the largest
+Scene object count; native builds size renderer object caches, collider lines
+and snapshot storage to that count. The 512 ordering buckets remain independent
+so this memory saving does not reduce depth-sorting precision. Scene textures are loaded from CD and reuse
 VRAM slots. Runtime transitions clean up the previous Scene, reset live object
 storage, initialize the destination and reload its resources.
 

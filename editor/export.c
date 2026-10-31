@@ -235,7 +235,7 @@ static void remove_stage(const char *directory)
 static char *read_stage(const char *directory,const char *name,GError **error)
 { char *path=g_build_filename(directory,name,NULL),*text=NULL;g_file_get_contents(path,&text,NULL,error);g_free(path);return text; }
 
-/* Keep immutable geometry/sample bytes once in the combined translation unit.
+/* Deduplicate immutable geometry/sample bytes across all Scenes.
  * Mesh texture IDs, object state and writable SPU bank addresses stay per Scene.
  * Exact initializer equality matters: matching filenames alone is insufficient. */
 static void share_arrays(GString *code,GHashTable *shared,GHashTable *aliases,
@@ -266,12 +266,34 @@ static void share_arrays(GString *code,GHashTable *shared,GHashTable *aliases,
     g_string_free(result,TRUE);g_match_info_free(match);g_regex_unref(regex);
 }
 
+/* Keep each shared ADPCM sample in its own translation unit. Psy-Q's legacy
+ * assembler can crash on the combined Scene tables plus large sample arrays.
+ * The extern declarations retain word alignment and one canonical byte copy. */
+static void separate_samples(GString *code,GPtrArray *samples)
+{
+    GRegex *regex=g_regex_new("static const unsigned int (sound_[0-9_]+)\\[([0-9]+)\\]=\\{\n.*?\\};\n",G_REGEX_DOTALL,0,NULL);
+    GMatchInfo *match=NULL;g_regex_match(regex,code->str,0,&match);
+    GString *result=g_string_new("");gint previous=0;
+    while(g_match_info_matches(match)) {
+        gint start,end;g_match_info_fetch_pos(match,0,&start,&end);
+        char *name=g_match_info_fetch(match,1),*count=g_match_info_fetch(match,2);
+        g_string_append_len(result,code->str+previous,start-previous);
+        g_string_append_printf(result,"extern const unsigned int %s[%s];\n",name,count);
+        /* Strip only the storage class; the array must have external linkage. */
+        g_ptr_array_add(samples,g_strndup(code->str+start+7,end-start-7));
+        previous=end;g_free(name);g_free(count);g_match_info_next(match,NULL);
+    }
+    g_string_append(result,code->str+previous);g_string_assign(code,result->str);
+    g_string_free(result,TRUE);g_match_info_free(match);g_regex_unref(regex);
+}
+
 gboolean project_export(const Project *p,const char *directory,GError **error)
 {
     if(!project_validate(p,error)) return FALSE;
     char *stage=g_dir_make_tmp("psx-scenes-XXXXXX",error);if(!stage) return FALSE;
     GString *includes=g_string_new(""),*dispatch=g_string_new(""),*decl=g_string_new("");
     JsonArray *textures=json_array_new(),*modules=json_array_new();
+    GPtrArray *samples=g_ptr_array_new_with_free_func(g_free);
     guint texture_id=0,module_id=0,max_objects=1,total_triangles=0;
     gboolean ok=TRUE;
     GHashTable *shared=g_hash_table_new_full(g_str_hash,g_str_equal,g_free,g_free);
@@ -291,6 +313,7 @@ gboolean project_export(const Project *p,const char *directory,GError **error)
             GString *rewritten=g_string_new(code);
             GHashTable *aliases=g_hash_table_new_full(g_str_hash,g_str_equal,g_free,g_free);
             share_arrays(rewritten,shared,aliases,n,&total_triangles);
+            separate_samples(rewritten,samples);
             g_string_replace(rewritten,"#include \"scene.h\"","#include \"object.h\"",0);
             char *allocation=g_strdup_printf("static PsxObject objects[%u];\n",MAX(1,view.objects->len));
             g_string_replace(rewritten,allocation,"",0);g_free(allocation);
@@ -342,6 +365,11 @@ gboolean project_export(const Project *p,const char *directory,GError **error)
     }
     g_hash_table_unref(shared);
     if(ok && (total_triangles>4096 || module_id>64)) ok=bad(error,"Project limits: 4096 resident triangles and 64 logic modules across all Scenes.");
+    for(guint i=0;ok && i<samples->len;i++) {
+        char *name=g_strdup_printf("M%03u.C",module_id+i);
+        ok=write_file(stage,name,g_ptr_array_index(samples,i),error);
+        json_array_add_string_element(modules,name);g_free(name);
+    }
     if(ok) {
         GString *source=g_string_new("/* Generated multi-Scene C89 game. */\n#include \"scene.h\"\n#include <string.h>\n");
         g_string_append_printf(source,"static PsxObject objects[%u];\nstatic PsxScene studio_state;\nconst char *studio_scene_name;\nPsxTexture *studio_textures;\nunsigned int studio_texture_count;\n",max_objects);
@@ -354,6 +382,7 @@ gboolean project_export(const Project *p,const char *directory,GError **error)
         ok=write_file(stage,"scene.c",source->str,error) && write_file(stage,"scene.h",header,error);g_string_free(source,TRUE);
         JsonObject *manifest=json_object_new();json_object_set_array_member(manifest,"textures",json_array_ref(textures));json_object_set_array_member(manifest,"modules",json_array_ref(modules));
         json_object_set_int_member(manifest,"triangles",total_triangles);
+        json_object_set_int_member(manifest,"max_objects",max_objects);
         JsonNode *node=json_node_new(JSON_NODE_OBJECT);json_node_take_object(node,manifest);char *text=json_to_string(node,TRUE);
         if(ok) ok=write_file(stage,"assets.json",text,error);
         g_free(text);json_node_free(node);
@@ -371,5 +400,5 @@ gboolean project_export(const Project *p,const char *directory,GError **error)
         if(d) g_dir_close(d);
     }
     g_string_free(includes,TRUE);g_string_free(dispatch,TRUE);g_string_free(decl,TRUE);
-    json_array_unref(textures);json_array_unref(modules);remove_stage(stage);g_free(stage);return ok;
+    json_array_unref(textures);json_array_unref(modules);g_ptr_array_unref(samples);remove_stage(stage);g_free(stage);return ok;
 }

@@ -122,6 +122,15 @@ Use [modules.md](modules.md) for console APIs, [audio.md](audio.md) for sound an
 [textures.md](textures.md) for UV/conversion rules. Keep game-specific rules in
 the release's game guide rather than duplicating them across engine documentation.
 
+The optional `tools/generate_shadow_village.py` regenerates the integrated
+mountain village in Scene 6 of the installed Shadow Ops example. It requires
+Pillow only for desktop asset generation and replaces generated village scenery
+and placements; preserve manual Scene 6 edits before running it. It also places
+manual checkpoints beside every campaign exit. The campaign and village checks
+share `/export/shadow-ops-example`; no separate prototype project is required.
+Menu-style HUD messages have an opaque bordered panel sized to their visible
+text, including checkpoint confirmations and errors.
+
 ## Commands and verification
 
 Run from `psx-studio/`. No installation is needed if dependencies are present.
@@ -165,7 +174,9 @@ machine-specific path into source. CLI overrides do not rewrite project settings
 ./build/psx-studio --build-ps1 --verify build/ps1/shadow-ops
 ```
 
-The build command starts DOSBox and needs a display. For automated execution,
+The build command starts DOSBox and needs a display. Large campaigns can take
+several minutes to compile with Psy-Q; the native pipeline allows up to ten
+minutes for DOSBox before terminating a stalled build. For automated execution,
 run it with the isolated-display rules in AGENTS.md. Output defaults to
 `build/ps1/PROJECT/`, using the sanitized `.psx` stem. Editor builds always use
 this location and expose no output setting. CLI `--output-root` and legacy custom
@@ -175,7 +186,10 @@ or `build/last-ps1-build.txt`, and check its project marker before using it.
 Console source/header filenames must remain DOS 8.3-compatible (for example,
 `card.c` and `save.h`); a host build does not catch long-name failures in Psy-Q.
 The CD is `cdrom/game.cue` plus `cdrom/GAME.ISO`; keep them together.
-`--verify` checks the PS-X EXE header and CD contents.
+`--verify` checks the PS-X EXE header and CD contents. It does not measure
+BSS/stack headroom; a successful verification must still be followed by an
+emulator boot check. Renderer object buffers are sized to the largest exported
+Scene, while ordering-table resolution stays fixed.
 `src/BUILD.LOG`, `dosbox.log` and `texture.log` hold build evidence.
 `build-info.json` records the SDK used; these ignored files may be absent in a
 fresh checkout. An empty `.psx` SDK field does not prevent a CLI override build.
@@ -239,6 +253,11 @@ development diary.
 - Shadow Ops industrial sectors do not sustain 30 FPS in the tested PCSX-R
   setup; see the example guide for measurements. Direct-to-gameplay diagnostic
   launches have stalled there, while the normal New Game path worked.
+- Alpine Ruins still has rendering slowdowns: a short PCSX-R movement check
+  observed approximately 8–19 presented FPS from the runtime counter. Scene
+  access and initial positioning were assisted through emulator RAM, so this is
+  not a natural campaign playthrough or a physical-console measurement. Fixed
+  simulation steps remain independent of the number of rendered images.
 - Earlier Windows 11 packaging/ANGLE checks do not establish current interactive
   GUI, SDK or emulator compatibility. Physical PS1 hardware and Windows 10 remain
   unverified. Emulator FPS is not a physical-console performance guarantee.
