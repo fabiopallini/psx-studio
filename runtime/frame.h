@@ -55,7 +55,13 @@ static void psx_frame_discard(PsxFrameQueue *q)
  * copied. The caller supplies storage for source->count objects. */
 static void psx_frame_snapshot(PsxScene *frame,PsxObject *objects,const PsxScene *source)
 {
+    unsigned int i;
     *frame=*source;
+    if(source->hud.message) {
+        for(i=0;i<PSX_HUD_MESSAGE_SIZE-1 && source->hud.message[i];i++)
+            frame->message_text[i]=source->hud.message[i];
+        frame->message_text[i]=0;frame->hud.message=frame->message_text;
+    }
     memcpy(objects,source->objects,source->count*sizeof(PsxObject));
     frame->objects=objects;
 }

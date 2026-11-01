@@ -50,6 +50,142 @@ def blood_art():
         draw.rectangle(rect,fill=color)
     image.save(DATA/'blood.png')
 
+def inventory_assets(project):
+    """Regenerate UI props/effects and the authored rear doorway boundaries."""
+    # The same code-native palette/icon rows draw the PS1 inventory and sprite.
+    import re
+    header=(ROOT/'runtime/icons.h').read_text()
+    palette=[tuple(map(int,c)) for c in re.findall(r'\{(\d+),(\d+),(\d+)\}',header)]
+    rows=re.findall(r'"([0-7]{32})"',header.split('psx_icon_key[PSX_ICON_HEIGHT]')[1].split('};')[0])
+    image=Image.new('RGBA',(32,20),(0,0,0,0))
+    for y,row in enumerate(rows):
+        for x,pixel in enumerate(row):
+            if pixel!='0':image.putpixel((x,y),(*palette[int(pixel)],255))
+    image.save(DATA/'wardkey.png')
+    # Effects reuse the actor atlas's existing warm/white pixels, freeing the
+    # fourth texture slot for the key without changing blood or projectile size.
+    actors=Image.open(DATA/'actors.png').convert('RGB')
+    original=Image.open(DATA/'atlas.png').convert('RGB')
+    source_points=[(36,38),(71,74)]
+    samples=[]
+    for point in source_points:
+        color=original.getpixel(point)
+        samples.append(min(((x,y) for y in range(128) for x in range(128)),
+            key=lambda p:sum((actors.getpixel(p)[i]-color[i])**2 for i in range(3))))
+    for name in ('tracer.obj','muzzle.obj'):
+        lines=(DATA/name).read_text().splitlines()
+        for i,line in enumerate(lines):
+            if line.startswith('vt '):
+                u,v=map(float,line.split()[1:]);index=0 if u<.4 else 1
+                # Preserve the already-remapped white sample in the bottom quarter.
+                if v<.25:index=min(range(2),key=lambda k:abs(u-(samples[k][0]+.5)/128)+abs(v-(1-(samples[k][1]+.5)/128)))
+                x,y=samples[index];lines[i]=f'vt {(x+.5)/128:.7f} {1-(y+.5)/128:.7f}'
+        (DATA/name).write_text('\n'.join(lines)+'\n')
+    for scene in project['scenes']:
+        if scene['id'] not in (2,3):continue
+        data=scene['data']
+        for o in data['objects']:
+            if 100<=o['id']<=107:o['scale']=[.5,.5,1]
+        for o in data['objects']:
+            if o['id']==80 or 100<=o['id']<=107:o['texture']='actors.png'
+            if o['id']==10:
+                o['position'][2]=-250 if scene['id']==2 else -310
+            if o['id']==30:
+                o['position'][2]=-235 if scene['id']==2 else -295
+                o['bounds']=[28,32,28];o['scale']=[28/24,32/24,28/24]
+        if scene['id']==2:
+            prop=next((o for o in data['objects'] if o['id']==31),None)
+            if prop is None:
+                prop=copy.deepcopy(next(o for o in data['objects'] if o['id']==80))
+                prop.update(id=31,name='Ward Key - reception counter',position=[-224,64,30],bounds=[8,4,8],
+                            solid=False,module='',collision_action=0,target_scene=0)
+                data['objects'].insert(2,prop)
+            prop.update(kind='billboard',asset='',texture='wardkey.png',rotation=[0,0,0],scale=[.7,.4375,1])
+    active=next(scene['data'] for scene in project['scenes'] if scene['id']==project['active_scene'])
+    project['objects']=copy.deepcopy(active['objects'])
+
+def extend_sanitarium(project):
+    """Add two connected camera angles without regenerating the existing rooms."""
+    import re
+    header=(ROOT/'runtime/icons.h').read_text()
+    palette=[tuple(map(int,c)) for c in re.findall(r'\{(\d+),(\d+),(\d+)\}',header)]
+    rows=re.findall(r'"([0-7]{32})"',header.split('psx_icon_ammo[PSX_ICON_HEIGHT]')[1].split('};')[0])
+    image=Image.new('RGBA',(32,20),(0,0,0,0))
+    for y,row in enumerate(rows):
+        for x,pixel in enumerate(row):
+            if pixel!='0':image.putpixel((x,y),(*palette[int(pixel)],255))
+    image.save(DATA/'ammo.png')
+    ward=next(sc['data'] for sc in project['scenes'] if sc['id']==3)
+    def portal(data,id,name,x,z,target,angle=180):
+        existing=next((o for o in data['objects'] if o['id']==id),None)
+        if existing is None:
+            existing=copy.deepcopy(next(o for o in data['objects'] if o['id']==30))
+            data['objects'].insert(1,existing)
+        existing.update(id=id,name=name,position=[x,32,z],rotation=[0,angle,0],
+                        bounds=[28,32,28],scale=[28/24,32/24,28/24],
+                        collision_action=3,target_scene=target,solid=False,asset='',texture='',module='')
+    atrium=next(sc['data'] for sc in project['scenes'] if sc['id']==2)
+    next(o for o in atrium['objects'] if o['id']==30)['rotation']=[0,180,0]
+    portal(ward,30,'Door trigger - Atrium',0,190,2,0)
+    portal(ward,33,'Door trigger - Observation',0,-295,4)
+    for sid,name,bg,eye,zoom,positions in [
+        (4,'Observation corridor','observation.png',(380,330,520),.64,[(-95,20),(110,80),(-110,140),(120,0)]),
+        (5,'Medical archive','archive.png',(-380,380,520),.66,[(-95,80),(90,-100),(-80,140),(120,70)])]:
+        if any(sc['id']==sid for sc in project['scenes']):continue
+        data=copy.deepcopy(ward)
+        data['objects']=[o for o in data['objects'] if o['id'] not in (31,33,35)]
+        data['background']=bg
+        camera=next(o for o in data['objects'] if o['id']==200)
+        yaw=math.degrees(math.atan2(eye[0],eye[2]));pitch=math.degrees(math.atan2(eye[1],math.hypot(eye[0],eye[2])))
+        pitch-=4 if sid==4 else 2
+        camera.update(name='Fixed '+name.lower()+' camera',position=list(eye),rotation=[pitch,yaw,0],camera_zoom=zoom)
+        # Legacy authoring view matches the fixed game camera, with no follow.
+        y=math.radians(yaw);p=math.radians(pitch)
+        data['camera']=[eye[0]-600*math.sin(y)*math.cos(p),eye[1]-600*math.sin(p),eye[2]-600*math.cos(y)*math.cos(p)-600]
+        data['view']=[yaw,pitch,zoom]
+        next(o for o in data['objects'] if o['id']==10)['position'][2]=-250
+        next(o for o in data['objects'] if o['id']==14).update(name='Distant wall storage',position=[-360,50,0],bounds=[20,50,200])
+        for o,(x,z) in zip([o for o in data['objects'] if 20<=o['id']<=23],positions):o['position']=[x,32,z]
+        portal(data,30,'Door trigger - '+('Treatment ward' if sid==4 else 'Observation'),-110 if sid==4 else -70,-210,3 if sid==4 else 4)
+        if sid==4:
+            portal(data,33,'Door trigger - Archive',150,-210,5)
+            ammo=copy.deepcopy(next(o for o in data['objects'] if o['id']==80))
+            ammo.update(id=35,name='24 handgun rounds',kind='billboard',asset='',texture='ammo.png',
+                        position=[30,12,10],rotation=[0,0,0],scale=[.7,.4375,1],bounds=[8,4,8],module='',solid=False)
+            data['objects'].insert(2,ammo)
+        project['scenes'].append(dict(id=sid,name=name,data=data))
+    active=next(sc['data'] for sc in project['scenes'] if sc['id']==project['active_scene'])
+    project['objects']=copy.deepcopy(active['objects'])
+
+def add_depth_demo(project):
+    """Add pharmacy and one-shot ammunition pickups to each playable area."""
+    archive=next(sc['data'] for sc in project['scenes'] if sc['id']==5)
+    if not any(o['id']==33 for o in archive['objects']):
+        portal=copy.deepcopy(next(o for o in archive['objects'] if o['id']==30))
+        portal.update(id=33,name='Door trigger - Pharmacy',position=[0,32,190],rotation=[0,0,0],target_scene=6)
+        archive['objects'].insert(1,portal)
+    if not any(sc['id']==6 for sc in project['scenes']):
+        data=copy.deepcopy(next(sc['data'] for sc in project['scenes'] if sc['id']==2))
+        data['objects']=[o for o in data['objects'] if o['id'] not in (31,33,35)]
+        data['background']='pharmacy.png';data['background_layers']=[dict(path='counter.png',depth=550)]
+        next(o for o in data['objects'] if o['id']==30).update(name='Door trigger - Archive',target_scene=5)
+        next(o for o in data['objects'] if o['id']==200)['name']='Fixed pharmacy camera'
+        next(o for o in data['objects'] if o['id']==2)['position']=[0,32,40]
+        next(o for o in data['objects'] if o['id']==14).update(name='Pharmacy counter collision',position=[0,40,120],bounds=[130,40,40],scale=[130/24,40/24,40/24])
+        for o,(x,z) in zip([o for o in data['objects'] if 20<=o['id']<=23],[(-60,0),(60,0),(-155,-100),(155,-60)]):o['position']=[x,32,z]
+        project['scenes'].append(dict(id=6,name='Pharmacy - depth layers',data=data))
+    positions={2:(110,12,80),3:(-140,12,70),4:(30,12,10),5:(80,12,80),6:(-145,12,-20)}
+    for sc in project['scenes']:
+        if sc['id'] not in positions:continue
+        data=sc['data'];ammo=next((o for o in data['objects'] if o['id']==35),None)
+        if ammo is None:
+            ammo=copy.deepcopy(next(o for o in data['objects'] if o['id']==80));data['objects'].insert(2,ammo)
+            ammo.update(id=35,name='24 handgun rounds',kind='billboard',asset='',texture='ammo.png',
+                        module='',collision_action=0,target_scene=0,solid=False,rotation=[0,0,0],scale=[.7,.4375,1],bounds=[8,4,8])
+        ammo['position']=list(positions[sc['id']])
+    active=next(sc['data'] for sc in project['scenes'] if sc['id']==project['active_scene'])
+    project['objects']=copy.deepcopy(active['objects'])
+
 def expand_rooms(project):
     game=next(scene['data'] for scene in project['scenes'] if scene['id']==2)
     if not any(o['id']==81 for o in game['objects']):
@@ -61,6 +197,7 @@ def expand_rooms(project):
             game['objects'].append(o)
     next(o for o in game['objects'] if o['id']==10)['position'][2]=-470
     room=copy.deepcopy(game);room['background']='ward-background.png'
+    room['objects']=[o for o in room['objects'] if o['id']!=31]
     next(o for o in room['objects'] if o['id']==200)['name']='Fixed treatment ward camera'
     # The second room has beds at the sides rather than an atrium reception desk.
     desk=next(o for o in room['objects'] if o['id']==14)
@@ -80,11 +217,12 @@ def expand_rooms(project):
     if project['active_scene']==2:
         project['objects']=copy.deepcopy(game['objects'])
     blood_art()
+    inventory_assets(project)
 
 def generate():
     if any(not (SOURCE/name).exists() for name in ('actors.png','atlas.png','tracer.obj','muzzle.obj','shot.vag')):
         raise SystemExit('Install the original Shadow Ops example assets first.')
-    if any(not (DATA/name).exists() for name in ('background.png','ward-background.png','ward.c','menu.c')):
+    if any(not (DATA/name).exists() for name in ('background.png','ward-background.png','observation.png','archive.png','pharmacy.png','counter.png','ward.c','menu.c')):
         raise SystemExit('Supply both backgrounds, ward.c and menu.c from the Last Ward example archive first.')
     if (ROOT/'examples/last-ward.psx').exists():
         raise SystemExit('Project exists; preserve/move it before regenerating the demo.')
@@ -140,6 +278,8 @@ def generate():
     project=copy.deepcopy(game);project.update(active_scene=2,startup_scene=1,
         scenes=[dict(id=1,name='Last Ward - briefing',data=title),dict(id=2,name='Sanitarium atrium',data=game)])
     expand_rooms(project)
+    extend_sanitarium(project)
+    add_depth_demo(project)
     (ROOT/'examples/last-ward.psx').write_text(json.dumps(project,indent=2)+'\n')
     print('Created examples/last-ward.psx')
 if __name__=='__main__':generate()

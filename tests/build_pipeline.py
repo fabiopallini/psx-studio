@@ -128,6 +128,44 @@ class BuildTests(unittest.TestCase):
             self.prepare()
         self.assertFalse((output / 'data/plates/room.png').exists())
 
+    def test_depth_layer_snapshot_alpha_and_native_crop(self):
+        import zlib
+        folder = self.project.with_name('game_psx_data') / 'plates'
+        folder.mkdir(parents=True)
+        def chunk(kind, data):
+            return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+        rows = []
+        for y in range(256):
+            row = bytearray()
+            for x in range(320):
+                opaque = 40 <= x < 120 and 120 <= y < 180 and (x, y) != (50, 130)
+                row.extend((128, 64, 32, 255 if opaque else 0))
+            rows.append(b'\0' + row)
+        png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 320, 256, 8, 6, 0, 0, 0))
+        png += chunk(b'IDAT', zlib.compress(b''.join(rows))) + chunk(b'IEND', b'')
+        (folder / 'counter.png').write_bytes(png)
+        self.data['background_layers'] = [{'path': 'plates/counter.png', 'depth': 570}]
+        self.save()
+        self.prepare()
+        output = self.output()
+        self.assertEqual((output / 'data/plates/counter.png').read_bytes(), png)
+        manifest = json.loads((output / 'src/assets.json').read_text())
+        texture = manifest['textures'][0]
+        self.assertEqual(texture['directory'], 'S000')
+        self.assertIn('Directory S000', (output / 'cdrom/CONF.CTI').read_text())
+        self.assertEqual((texture['width'], texture['height']), (80, 60))
+        tim = (output / 'data' / texture['file']).read_bytes()
+        self.assertNotEqual(struct.unpack_from('<H', tim, 20)[0], 0)
+        self.assertEqual(struct.unpack_from('<H', tim, 20 + 2*(10*80+10))[0], 0)
+        code = (output / 'src/S000.C').read_text()
+        self.assertIn('scene.backdrop_count=1U', code)
+        self.assertIn('scene.backdrops[0].depth=570L', code)
+        self.assertIn('scene.backdrops[0].x=40', code)
+        (folder / 'counter.png').unlink()
+        with self.assertRaises(RuntimeError):
+            self.prepare()
+        self.assertFalse((output / 'data/plates/counter.png').exists())
+
     def test_long_module_list_uses_ccpsx_control_file(self):
         data = self.project.with_name('game_psx_data')
         data.mkdir()
@@ -296,7 +334,7 @@ class VerifyTests(unittest.TestCase):
 
     def image(self, stride):
         offset = 24 if stride == 2352 else 0
-        image = bytearray(25 * stride)
+        image = bytearray(26 * stride)
         descriptor = bytearray(2048)
         descriptor[:7] = b'\x01CD001\x01'
         descriptor[156:190] = self.record('\x00', 20, 2048, 2)
@@ -308,6 +346,11 @@ class VerifyTests(unittest.TestCase):
         root.extend(self.record('ASSETS', 21, 2048, 2))
         texture = (self.root / 'data/T000.TIM').read_bytes()
         entries = self.record('T000.TIM;1', 24, len(texture))
+        manifest = json.loads((self.root / 'src/assets.json').read_text())
+        directory = manifest['textures'][0].get('directory')
+        if directory:
+            image[25*stride+offset:25*stride+offset+len(entries)] = entries
+            entries = self.record(directory, 25, 2048, 2)
         for sector, content in ((16, descriptor), (20, root), (21, entries), (24, texture)):
             image[sector*stride+offset:sector*stride+offset+len(content)] = content
         (self.root / 'cdrom/GAME.ISO').write_bytes(image)
@@ -328,6 +371,16 @@ class VerifyTests(unittest.TestCase):
             result = self.verify()
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('differs', result.stderr)
+
+    def test_scene_texture_subdirectory_and_legacy_manifest(self):
+        manifest = {'textures': [{'file': 'T000.TIM', 'directory': 'S005'}], 'modules': []}
+        (self.root / 'src/assets.json').write_text(json.dumps(manifest))
+        self.image(2352)
+        result = self.verify()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest['textures'][0]['directory'] = '../escape'
+        (self.root / 'src/assets.json').write_text(json.dumps(manifest))
+        self.assertNotEqual(self.verify().returncode, 0)
 
     def test_invalid_directory_is_rejected(self):
         image, offset = self.image(2352)

@@ -71,6 +71,9 @@ struct PsxObject {
 #define PSX_HUD_HEALTH_ONLY 1
 #define PSX_HUD_MENU 2
 #define PSX_HUD_COMBAT 3
+#define PSX_HUD_COMBAT_MESSAGE 4 /* Combat bar plus an opaque message balloon. */
+#define PSX_HUD_INVENTORY 5 /* Six graphical slots, inventory snapshot below. */
+#define PSX_HUD_MESSAGE_SIZE 512
 #define PSX_CHECKPOINT_LOAD 1
 #define PSX_CHECKPOINT_SAVE 2
 typedef struct PsxCheckpoint {
@@ -98,6 +101,20 @@ int psx_direction_angle(long x,long z);
 void psx_direction_vector(int angle,long vector[2]);
 int psx_direction_normalize(long x,long z,long vector[2]);
 
+/* Icon IDs 0 empty, 1 handgun, 2 ammunition, 3 key. Slots run left to right
+ * in a three-column, two-row grid. Entire state is copied with render frames. */
+typedef struct PsxInventory {
+    unsigned char icons[6];
+    int selected;
+} PsxInventory;
+
+#define PSX_MAX_BACKDROPS 8
+typedef struct PsxBackdrop {
+    unsigned int texture; /* Local 0-based texture index. */
+    int x,y,w,h; /* Native 320x256 screen rectangle. */
+    long depth; /* Positive camera-space units, same units as projected geometry. */
+} PsxBackdrop;
+
 struct PsxScene {
     PsxObject *objects;
     unsigned int count;
@@ -117,6 +134,10 @@ struct PsxScene {
     int (*play_music)(PsxScene *scene,const char *name,int volume);
     int (*play_sound)(PsxScene *scene,const char *name,int volume,int pan);
     unsigned int background_texture; /* 0 none; otherwise first of two screen-space TIM tiles, 1-based. */
+    char message_text[PSX_HUD_MESSAGE_SIZE]; /* Frame-owned snapshot of hud.message. */
+    PsxInventory inventory;
+    unsigned int backdrop_count;
+    PsxBackdrop backdrops[PSX_MAX_BACKDROPS];
 };
 
 /* Volume 0..16383, pan Q12 -4096..4096. No I/O/wait in this call. */

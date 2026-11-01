@@ -18,6 +18,8 @@ static void object_free(gpointer data)
 static void scene_free(gpointer value)
 { Scene *s=value;g_free(s->name);if(s->data) json_node_free(s->data);g_free(s); }
 
+static void background_layer_free(gpointer data)
+{ BackgroundLayer *layer=data;g_free(layer->path);g_free(layer); }
 void project_init(Project *p)
 {
     memset(p, 0, sizeof(*p));
@@ -27,6 +29,7 @@ void project_init(Project *p)
     p->dosbox = g_strdup(""); p->output_path = g_strdup("");p->background=g_strdup("");
     p->view[0] = .55 * 180 / G_PI; p->view[1] = .6 * 180 / G_PI; p->view[2] = .9;
     p->objects = g_ptr_array_new_with_free_func(object_free);
+    p->background_layers=g_ptr_array_new_with_free_func(background_layer_free);
     p->next_id = 1;
     p->show_game_frame = TRUE; p->drag_axis = 1;
     p->camera[2] = -600;
@@ -39,6 +42,7 @@ void project_clear(Project *p)
 {
     g_free(p->name); g_free(p->path); g_free(p->psyq_path); g_free(p->asset_root); g_free(p->dosbox); g_free(p->output_path); g_free(p->emulator_command);g_free(p->background);
     g_clear_pointer(&p->objects, g_ptr_array_unref);
+    g_clear_pointer(&p->background_layers,g_ptr_array_unref);
     g_clear_pointer(&p->scenes,g_ptr_array_unref);
     memset(p, 0, sizeof(*p));
 }
@@ -156,6 +160,12 @@ char **project_emulator_argv(const char *command,const char *cue,const char *iso
 
 gboolean project_validate_scene(const Project *p, GError **error)
 {
+    if(p->background_layers->len>STUDIO_MAX_BACKGROUND_LAYERS) return fail(error,"A Scene supports at most four depth layers.");
+    for(guint i=0;i<p->background_layers->len;i++) {
+        BackgroundLayer *layer=g_ptr_array_index(p->background_layers,i);
+        if(!*layer->path || !relative_asset(layer->path) || layer->depth<16 || layer->depth>32767)
+            return fail(error,"Depth layers require a relative PNG path and camera depth from 16 to 32767.");
+    }
     if(!relative_asset(p->background)) return fail(error,"Scene background must use a path relative to the data folder, without '..'.");
     if(p->emulator_command && *p->emulator_command) {
         char **argv=project_emulator_argv(p->emulator_command,"game.cue","GAME.ISO",error);
@@ -261,6 +271,14 @@ JsonNode *project_scene_to_json(const Project *p)
     json_builder_set_member_name(b,"show_colliders");json_builder_add_boolean_value(b,p->show_colliders);
     vector_member(b, "camera", p->camera); vector_member(b, "view", p->view);
     string_member(b,"background",p->background);
+    json_builder_set_member_name(b,"background_layers");json_builder_begin_array(b);
+    for(guint i=0;i<p->background_layers->len;i++) {
+        BackgroundLayer *layer=g_ptr_array_index(p->background_layers,i);
+        json_builder_begin_object(b);string_member(b,"path",layer->path);
+        json_builder_set_member_name(b,"depth");json_builder_add_int_value(b,layer->depth);
+        json_builder_end_object(b);
+    }
+    json_builder_end_array(b);
     string_member(b,"projection",p->projection?"perspective":"orthographic");
     string_member(b,"emulator_command",p->emulator_command);
     string_member(b, "dosbox", p->dosbox); string_member(b, "output_path", p->output_path);
@@ -315,6 +333,10 @@ gboolean project_save(Project *p, const char *path, GError **error)
                 for(int k=0;k<3;k++) if(*refs[k]) {char *source=asset_path(&view,refs[k]);valid=source && g_file_test(source,G_FILE_TEST_IS_REGULAR);g_free(source);if(!valid) break;}
             }
             if(valid && *view.background) {char *source=asset_path(&view,view.background);valid=source && g_file_test(source,G_FILE_TEST_IS_REGULAR);g_free(source);}
+            for(guint i=0;valid && i<view.background_layers->len;i++) {
+                BackgroundLayer *layer=g_ptr_array_index(view.background_layers,i);
+                char *source=asset_path(&view,layer->path);valid=source && g_file_test(source,G_FILE_TEST_IS_REGULAR);g_free(source);
+            }
             project_clear(&view);
             if(!valid) {g_free(data_dir);g_free(canonical);return fail(error,"Save as: a referenced asset is missing from a Scene.");}
         }
@@ -372,6 +394,24 @@ gboolean project_scene_decode(Project *p, JsonNode *root, GError **error)
     if(json_object_has_member(doc,"background")) {
         if(!typed(doc,"background",G_TYPE_STRING)) return fail(error,"Invalid scene background path.");
         g_free(p->background);p->background=g_strdup(json_object_get_string_member(doc,"background"));
+    }
+    g_ptr_array_set_size(p->background_layers,0);
+    if(json_object_has_member(doc,"background_layers")) {
+        JsonNode *node=json_object_get_member(doc,"background_layers");
+        if(!JSON_NODE_HOLDS_ARRAY(node)) return fail(error,"Invalid depth layer list.");
+        JsonArray *layers=json_node_get_array(node);
+        if(json_array_get_length(layers)>STUDIO_MAX_BACKGROUND_LAYERS) return fail(error,"Too many depth layers.");
+        for(guint i=0;i<json_array_get_length(layers);i++) {
+            JsonNode *entry=json_array_get_element(layers,i);
+            if(!JSON_NODE_HOLDS_OBJECT(entry)) return fail(error,"Invalid depth layer.");
+            JsonObject *object=json_node_get_object(entry);
+            if(!typed(object,"path",G_TYPE_STRING) || !typed(object,"depth",G_TYPE_INT64)) return fail(error,"Invalid depth layer fields.");
+            gint64 depth=json_object_get_int_member(object,"depth");
+            if(depth<16 || depth>32767) return fail(error,"Layer depth must be from 16 to 32767.");
+            BackgroundLayer *layer=g_new0(BackgroundLayer,1);
+            layer->path=g_strdup(json_object_get_string_member(object,"path"));layer->depth=(int)depth;
+            g_ptr_array_add(p->background_layers,layer);
+        }
     }
     if (json_object_has_member(doc,"projection")) {
         if(!typed(doc,"projection",G_TYPE_STRING)) return fail(error,"Invalid camera projection.");

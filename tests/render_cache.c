@@ -62,6 +62,10 @@ int main(void)
     long offset[3]={-32768,32767,0};
     long screen[3]={0,0,0};
     long triangle[3][3]={{0,0,-500},{0,0,1500},{0,0,-500}};
+    /* Camera-space depth layers bracket ordinary actors using the same OT bins. */
+    assert(psx_depth_bucket(480,512)<psx_depth_bucket(570,512));
+    assert(psx_depth_bucket(720,512)>psx_depth_bucket(570,512));
+    assert(psx_depth_bucket(16,512)==2 && psx_depth_bucket(32767,512)==509);
     /* A broad ground triangle must stay behind a nearby actor even when
      * average depth would sort it in front. Reserve its bucket exclusively. */
     assert(psx_triangle_bucket(triangle,2048,1)==2047);

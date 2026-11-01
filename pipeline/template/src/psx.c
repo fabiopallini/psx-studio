@@ -19,8 +19,9 @@ static union {
     struct { POLY_F3 primitive; DR_TPAGE mode; } flat;
 } polygons[2][8192];
 static unsigned long tim_buffer[34000];
-static TILE hud_tiles[2][160];
-static struct { SPRT sprite; DR_TPAGE mode; } background_tiles[2][2];
+#define HUD_TILE_LIMIT 768
+static TILE hud_tiles[2][HUD_TILE_LIMIT];
+static struct { SPRT sprite; DR_TPAGE mode; } background_tiles[2][2],depth_tiles[2][PSX_MAX_BACKDROPS];
 static PsxProjectionCache cache[STUDIO_OBJECT_LIMIT];
 static unsigned short shared_vertices[12288];
 static unsigned short position_hash[PSX_POSITION_HASH_SIZE];
@@ -535,7 +536,7 @@ const PsxScene *psDrawScene(void)
 static void hud_rect(int *next,int x,int y,int w,int h,int r,int g,int b)
 {
     TILE *tile;
-    if(*next>=160) return;
+    if(*next>=HUD_TILE_LIMIT) return;
     tile=&hud_tiles[buffer_index][(*next)++];setTile(tile);
     setXY0(tile,x,y);setWH(tile,w,h);setRGB0(tile,r,g,b);
     addPrim(&ordering[buffer_index][0],tile);
@@ -557,6 +558,56 @@ static void hud_icon(int *next,const char *const *rows,int width,int x,int y)
         if(pixel=='b') {r=110;g=82;b=55;}
         hud_rect(next,x+column,y+row,end-column,1,r,g,b);
     }
+}
+/* Graphic inventory silhouettes use native color runs, not font characters. */
+#include "icons.h"
+static void hud_item_icon(int *next,int item,int x,int y)
+{
+    const char *const *rows;
+    int row,column,end,color;
+    rows=psx_inventory_icon(item);if(!rows) return;
+    for(row=0;row<PSX_ICON_HEIGHT;row++) for(column=0;column<PSX_ICON_WIDTH;column=end) {
+        color=rows[row][column]-'0';end=column+1;
+        while(end<PSX_ICON_WIDTH && rows[row][end]==rows[row][column]) end++;
+        if(color<=0 || color>=8) continue;
+        hud_rect(next,x+column,y+row,end-column,1,
+            psx_icon_palette[color][0],psx_icon_palette[color][1],psx_icon_palette[color][2]);
+    }
+}
+static void hud_item_count(int *next,int value,int x,int y)
+{
+    static const unsigned short digits[10]={31599,9362,29671,29391,23497,31183,31215,29257,31727,31695};
+    int n,row,column,digit;
+    if(value<0) value=0;if(value>99) value=99;
+    for(n=0;n<2;n++) {
+        digit=n?value%10:value/10;
+        for(row=0;row<5;row++) for(column=0;column<3;column++)
+            if(digits[digit]&(1U<<(14-row*3-column)))
+                hud_rect(next,x+n*4+column,y+row,1,1,236,222,178);
+    }
+}
+static void hud_inventory(void)
+{
+    int next,i,x,y,selected,health,maximum,width;
+    next=0;selected=current_scene->inventory.selected;
+    for(i=0;i<6;i++) {
+        x=68+(i%3)*64;y=80+(i/3)*36;
+        if(current_scene->inventory.icons[i]==2) hud_item_count(&next,current_scene->hud.ammo,x+43,y+25);
+        hud_item_icon(&next,current_scene->inventory.icons[i],x+12,y+6);
+        /* Reverse OT insertion: pixels, inset, highlighted bevel, outer shadow. */
+        hud_rect(&next,x+1,y+1,54,30,23,33,43);
+        hud_rect(&next,x,y,56,32,i==selected?236:91,i==selected?193:113,i==selected?85:128);
+        hud_rect(&next,x+2,y+2,56,32,5,9,14);
+    }
+    maximum=current_scene->hud.max_health;if(maximum<1) maximum=1;if(maximum>32767) maximum=32767;
+    health=current_scene->hud.health;if(health<0) health=0;if(health>maximum) health=maximum;
+    width=(int)((long)health*44/maximum);
+    hud_rect(&next,202,59,width,4,health*4<=maximum?225:66,health*4<=maximum?65:204,85);
+    hud_rect(&next,202,59,44,4,43,32,34);
+    hud_rect(&next,200,57,48,8,100,123,127);
+    hud_rect(&next,50,42,220,180,12,20,30);
+    hud_rect(&next,48,40,224,184,116,138,155);
+    hud_rect(&next,51,43,224,184,3,6,10);
 }
 static void hud_weapons(void)
 {
@@ -593,7 +644,7 @@ static void hud_weapons(void)
 }
 /* Opaque, bordered dialog balloon. Font cells are 8x8 at screen (8,8),
  * with a 38-column / 28-row viewport. Derive the panel from visible text. */
-static void hud_dialog(const char *message)
+static void hud_dialog(const char *message,int first_tile)
 {
     int column,row,left,right,top,bottom,x,y,w,h,next,i;
     unsigned char c;
@@ -613,7 +664,7 @@ static void hud_dialog(const char *message)
     if(left>right || top>bottom) return;
     x=left*8;y=top*8;w=(right-left+3)*8;h=(bottom-top+3)*8;
     if(x+w>316) w=316-x;if(y+h>236) h=236-y;
-    next=0;
+    next=first_tile;
     /* Reverse OT order: shadow, light border, dark fill, then FntFlush text. */
     hud_rect(&next,x+2,y+2,w-4,h-4,18,25,34);
     hud_rect(&next,x,y,w,h,168,188,202);
@@ -626,15 +677,16 @@ void psDrawHud(void)
     const int x[4]={0,28,30,30},y[4]={0,6,8,8};
     const int w[4]={320,98,94,94},h[4]={27,12,8,8};
     if(!current_scene || !current_scene->hud.enabled) return;
-    if(current_scene->hud.style==PSX_HUD_MENU) {hud_dialog(current_scene->hud.message);return;}
-    combat=current_scene->hud.style==PSX_HUD_COMBAT;
+    if(current_scene->hud.style==PSX_HUD_MENU) {hud_dialog(current_scene->hud.message,0);return;}
+    if(current_scene->hud.style==PSX_HUD_INVENTORY) {hud_inventory();return;}
+    combat=current_scene->hud.style==PSX_HUD_COMBAT || current_scene->hud.style==PSX_HUD_COMBAT_MESSAGE || current_scene->hud.style==PSX_HUD_INVENTORY;
     maximum=current_scene->hud.max_health;
     if(maximum<1) maximum=1;if(maximum>32767) maximum=32767;
     health=current_scene->hud.health;
     if(health<0) health=0;if(health>maximum) health=maximum;
     width=(int)((long)health*(combat?72:94)/maximum);
     /* OT insertion is reversed: panel, border, empty bar, current HP. */
-    for(i=3;i>=(current_scene->hud.style==PSX_HUD_HEALTH_ONLY || current_scene->hud.style==PSX_HUD_COMBAT?1:0);i--) {
+    for(i=3;i>=(current_scene->hud.style==PSX_HUD_HEALTH_ONLY || combat?1:0);i--) {
         tile=&hud_tiles[buffer_index][i];setTile(tile);
         setXY0(tile,combat?10:x[i],combat?(i==1?8:10):y[i]);
         if(combat && i!=1) setXY0(tile,12,10);
@@ -647,6 +699,30 @@ void psDrawHud(void)
         addPrim(&ordering[buffer_index][0],tile);
     }
     if(combat) hud_weapons();
+    /* Separate packet slots: the dialog must not overwrite bar/icon primitives. */
+    if(current_scene->hud.style==PSX_HUD_COMBAT_MESSAGE)
+        hud_dialog(current_scene->hud.message,157);
+}
+/* Insert at the same depth convention as ordinary triangles. Higher camera
+ * depth draws first. Reverse equal-depth layers so list order is compositing order. */
+static void draw_depth_layers(void)
+{
+    int i,bucket;
+    PsxBackdrop *layer;
+    PsxTexture *texture;
+    SPRT *sprite;
+    DR_TPAGE *mode;
+    if(!current_scene) return;
+    for(i=(int)current_scene->backdrop_count-1;i>=0;i--) {
+        if(i>=PSX_MAX_BACKDROPS) continue;
+        layer=&current_scene->backdrops[i];if(layer->texture>=texture_count) continue;
+        texture=&textures[layer->texture];sprite=&depth_tiles[buffer_index][i].sprite;mode=&depth_tiles[buffer_index][i].mode;
+        setSprt(sprite);setShadeTex(sprite,1);setRGB0(sprite,128,128,128);
+        setXY0(sprite,layer->x,layer->y);setUV0(sprite,texture->u,texture->v);setWH(sprite,layer->w,layer->h);
+        setDrawTPage(mode,drawing[buffer_index].dfe,drawing[buffer_index].dtd,texture->tpage);
+        bucket=psx_depth_bucket(layer->depth,STUDIO_DRAW_LIMIT);
+        addPrim(&ordering[buffer_index][bucket],sprite);addPrim(&ordering[buffer_index][bucket],mode);
+    }
 }
 /* Draw after building the world OT so these primitives are its first entries.
  * Exact-size sprites avoid affine seams and keep the background fixed on screen. */
@@ -672,7 +748,7 @@ static void draw_background(void)
 }
 void psDisplay(void)
 {
-    draw_background();
+    draw_background();draw_depth_layers();
     rendering=0;frames.queued=buffer_index;poll_render();
 }
 

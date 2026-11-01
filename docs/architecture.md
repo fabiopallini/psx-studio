@@ -53,13 +53,21 @@ so this memory saving does not reduce depth-sorting precision. Scene textures ar
 VRAM slots. Runtime transitions clean up the previous Scene, reset live object
 storage, initialize the destination and reload its resources.
 
-Each Scene may reference a pre-rendered PNG plate through `background`. Native
-host decoding resamples it to 320×256 and exports two 16-bit TIM tiles, reserving
-their VRAM rectangles before packing object textures. The runtime's 1-based
-`background_texture` index selects that pair; zero keeps legacy Scenes unchanged.
-Sprites inserted at the head of the far ordering bucket draw before all geometry,
-including world-space backdrop meshes. Background pixels live in VRAM after
-Scene load, rather than adding an image transfer to the frame loop.
+Each Scene may reference a pre-rendered PNG plate through `background`, plus
+ordered transparent `background_layers` with camera-space depth. Host decoding
+samples them to 320×256. The base exports two opaque TIMs at fixed VRAM positions;
+depth layers retain binary alpha and export cropped/split TIM rectangles. Native
+page packing shares the remaining texture memory while protecting framebuffers,
+font memory and UV page boundaries. More than six exported TIM tiles are valid;
+the six-reference limit applies to ordinary object textures.
+
+The runtime's 1-based `background_texture` selects the base pair; zero retains
+legacy behavior. `backdrop_count/backdrops` hold up to eight exporter-owned layer
+tiles (four source PNGs), with screen rectangles and positive camera depth. The
+base draws at the far ordering bucket; layers use the same depth bins as normal
+triangles, so geometry can pass in front of or behind them. HUD stays in front.
+All image transfers occur at Scene load. The viewport previews alpha/depth with
+OpenGL, while the PS1 retains its ordinary approximate triangle ordering.
 
 ## Native build pipeline
 
@@ -70,6 +78,13 @@ runs Psy-Q through DOSBox, and verifies the executable and CD contents.
 Project source lists use a DOS 8.3 `sources.rsp` CCPSX control file so multiple
 Scene modules do not exceed DOS's 126-byte command-tail limit.
 It mounts the SDK read-only and invalidates previous final artifacts before export.
+Exported texture paths use `ASSETS/Snnn/Tnnn.TIM`, grouping by Scene index so each
+ISO directory fits one sector. Native SDK lookup was observed to fail for an
+asset placed in a second directory sector; grouping avoids that failure as games
+add Scenes and layers. The manifest's optional `directory` member records this
+layout. Build preparation writes the matching CD hierarchy and verification
+compares every nested file byte-for-byte. Older flat texture manifests remain
+verifiable.
 
 UI output is `build/ps1/PROJECT/`. CLI output-root overrides and legacy custom
 settings use isolated `NAME-HASH/` subfolders. Native Windows locks or Linux
@@ -106,8 +121,10 @@ clock and fresh pad input in the main thread, including between rendering batche
 Catch-up is bounded after exceptional stalls. Blocking Scene/card loads reset
 timing and wait for neutral input. Callbacks never execute in interrupts.
 
-Rendering uses a frozen object/camera/HUD snapshot. Two packet buffers allow CPU
-preparation to overlap GPU work; `runtime/frame.h` tracks ownership. GPU polling
+Rendering uses a frozen object/camera/HUD snapshot. HUD message text is copied
+into frame-owned storage (511 bytes plus terminator), allowing gameplay modules
+to update inventory/dialog buffers while an older frame is being rendered. Two
+packet buffers allow CPU preparation to overlap GPU work; `runtime/frame.h` tracks ownership. GPU polling
 is nonblocking during gameplay. The VBlank callback presents completed images;
 rendered FPS and simulation updates are independent. Long individual callbacks
 can still delay cooperative scheduling.

@@ -38,6 +38,23 @@ Never implement a permanent feature by editing generated files under `build/`.
 The next export/build replaces them. Editor preview does not execute C modules,
 AI or HUD logic, and OpenGL does not reproduce PS1 ordering/GPU behavior exactly.
 
+## Editor picking checks
+
+`build/viewport-tests` checks surface picking, nearest-object ordering, rotations,
+scales, billboard transparency and camera clipping in both projections. It skips
+when GTK cannot open a display. On Linux run GUI checks in an isolated session:
+
+```sh
+env -u WAYLAND_DISPLAY -u WAYLAND_SOCKET GDK_BACKEND=x11 SDL_VIDEODRIVER=x11 \
+  GTK_A11Y=none GIO_USE_VFS=local LIBGL_ALWAYS_SOFTWARE=1 \
+  xvfb-run -a dbus-run-session -- make test
+```
+
+The **Background** inspector tab holds the active Scene's base PNG and depth
+layers independently of object selection. Check depth editing, removal, undo and
+Scene switching there when changing its UI. Picking deliberately remains usable
+through painted background masks, just like the selection outline.
+
 ## Editing `.psx` directly
 
 The same loader and validator serve the UI and headless exporter. Direct JSON
@@ -133,9 +150,9 @@ text, including checkpoint confirmations and errors.
 
 The optional `examples/last-ward.psx` is an original fixed-camera survival horror
 demo with a pre-rendered plate and genuine 3D actors/collisions/projectiles.
-Its accompanying guide documents controls, module IDs and the absence of depth
-masks. `/export/last-ward-example` tests the installed demo; it skips when absent.
-Generic `/export/scene-background` and native pipeline fixtures remain independent
+Its accompanying guide documents controls, module IDs and transparent depth
+layers in the pharmacy. `/export/last-ward-example` tests the installed demo; it skips when absent.
+Generic `/export/scene-background`, `/export/depth-layers` and native pipeline fixtures remain independent
 of example assets. Check both authoring preview and console framing after changing
 a plate or its camera; host exports cannot prove that the painted perspective
 matches the walkable geometry.
@@ -230,7 +247,10 @@ firing, damage, pickups, camera follow, both directions of Scene travel and
 restart, including gates and loading/save prompts. Identify any debugger/RAM
 setup and distinguish it from a natural playthrough. Dummy audio checks do not
 verify the audible mix; checkpoint encoding tests do not verify memory-card I/O.
-Stop owned GUI/Xvfb processes afterward. Do not open the user's desktop
+For assisted RAM setups, wait for CD loading, neutral input and at least one
+actual gameplay step before repositioning the survivor into a portal: the new
+Scene ID can appear in RAM while loading is still blocking and entry triggers
+have not armed yet. Stop owned GUI/Xvfb processes afterward. Do not open the user's desktop
 or file manager for automated checks. For DOSBox Staging also use the temporary
 software-texture configuration described in AGENTS.md and disable primary/local
 configuration loading; Xvfb alone is insufficient.
@@ -265,11 +285,14 @@ development diary.
   access and initial positioning were assisted through emulator RAM, so this is
   not a natural campaign playthrough or a physical-console measurement. Fixed
   simulation steps remain independent of the number of rendered images.
-- Last Ward's PCSX-R movement checks reported approximately 15–16 presented
-  FPS initially and 14.7 FPS with the two-room/pixel-blood version. The background is static in VRAM; actor rendering still
-  uses the ordinary 3D renderer. Controlled native combat checks repositioned
-  actors through guest RAM; they are not a natural full playthrough or a physical
-  PS1 performance measurement.
+- Last Ward's PCSX-R movement checks reported approximately 14–16 presented
+  FPS, including the inventory/key version. Turning in the pharmacy with four
+  active patients and its transparent counter layer measured approximately
+  14 FPS. The background is static in VRAM;
+  actor rendering still uses the ordinary 3D renderer; layered plates share its
+  approximate depth ordering. Controlled native combat,
+  key pickup, inventory and door checks repositioned actors through guest RAM;
+  they are not a natural full playthrough or a physical PS1 performance measurement.
 - Earlier Windows 11 packaging/ANGLE checks do not establish current interactive
   GUI, SDK or emulator compatibility. Physical PS1 hardware and Windows 10 remain
   unverified. Emulator FPS is not a physical-console performance guarantee.

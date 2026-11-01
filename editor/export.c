@@ -64,6 +64,33 @@ static gboolean collect_sounds(const Project *p,const char *module,GPtrArray *so
     g_match_info_free(matches);g_regex_unref(regex);return ok;
 }
 
+/* Pack within 16-bit texture pages, keeping UV endpoints inside one page.
+ * Framebuffers occupy X<320; the final page excludes the font at X>=960. */
+static gboolean pack_plates(GPtrArray *textures,gboolean base,GError **error)
+{
+    int skyline[6][256]={{0}};
+    const int px[6]={320,576,832,320,576,832},py[6]={0,0,0,256,256,256};
+    const int widths[6]={256,256,192,256,256,128};
+    if(base) {for(int x=0;x<256;x++) skyline[0][x]=256;for(int x=0;x<64;x++) skyline[1][x]=256;}
+    g_ptr_array_sort(textures,texture_compare);
+    for(guint i=0;i<textures->len;i++) {
+        Texture *t=g_ptr_array_index(textures,i);gboolean placed=FALSE;
+        for(int page=0;page<6 && !placed;page++) {
+            int best_x=-1,best_y=257;
+            for(int x=0;x+(int)t->width<=widths[page];x+=64) {
+                int y=0;for(guint k=0;k<t->width;k++) y=MAX(y,skyline[page][x+k]);
+                if(y+(int)t->height<=256 && y<best_y) {best_x=x;best_y=y;}
+            }
+            if(best_x>=0) {
+                t->x=px[page]+best_x;t->y=py[page]+best_y;
+                for(guint k=0;k<t->width;k++) skyline[page][best_x+k]=best_y+t->height;
+                placed=TRUE;
+            }
+        }
+        if(!placed) return bad(error,"VRAM exhausted by object textures and depth layers. Reduce image sizes or the opaque area of a layer.");
+    }
+    return TRUE;
+}
 static gboolean export_one(const Project *p,const char *directory,GError **error)
 {
     if(!project_validate_scene(p,error)) return FALSE;
@@ -74,7 +101,9 @@ static gboolean export_one(const Project *p,const char *directory,GError **error
     GPtrArray *module_contents=g_ptr_array_new_with_free_func(g_free);
     gboolean ok=TRUE; guint triangles=0;
     Asset *background=NULL,*background_tiles[2]={NULL,NULL};
-    guint background_texture=0;
+    guint background_texture=0,layer_count=0;
+    GPtrArray *layer_images=g_ptr_array_new_with_free_func((GDestroyNotify)asset_free);
+    struct {Texture *texture;int x,y,depth;} layers[8];
     for(guint i=0;i<p->objects->len && ok;i++) {
         Object *o=g_ptr_array_index(p->objects,i);
         Asset *a=NULL;
@@ -101,20 +130,39 @@ static gboolean export_one(const Project *p,const char *directory,GError **error
         }
     }
     if(ok && (triangles>4096 || textures->len>6 || modules->len>64)) ok=bad(error,"Scene limits: 4096 triangles, 6 textures, 64 distinct modules.");
-    g_ptr_array_sort(textures,texture_compare);
-    gboolean used[6]={FALSE,FALSE,FALSE,FALSE,FALSE,FALSE};
     if(ok && *p->background) {
-        if(textures->len>4) {ok=bad(error,"A scene background reserves two VRAM slots; use at most four object textures.");goto done;}
-        background=asset_load_background(p,error);
-        if(!background) {ok=FALSE;goto done;}
-        used[0]=used[1]=TRUE;
+        background=asset_load_background(p,error);if(!background) {ok=FALSE;goto done;}
     }
-    const int sx[]={320,576,832,320,576,832},sy[]={0,0,0,256,256,256};
-    for(guint i=0;i<textures->len && ok;i++) {
-        Texture *t=g_ptr_array_index(textures,i); int slot=-1;
-        for(int k=0;k<6;k++) if(!used[k] && t->width<=((background && k==5)?128U:k%3==2?192U:256U)) {slot=k;break;}
-        if(slot<0) ok=bad(error,background?"Background VRAM exhausted: object slots fit 256, 256, 192 and 128 pixels; the last slot preserves the font.":"VRAM exhausted: only four textures can be wider than 192 pixels.");
-        else { used[slot]=TRUE; t->x=sx[slot];t->y=sy[slot]; }
+    for(guint i=0;ok && i<p->background_layers->len;i++) {
+        BackgroundLayer *entry=g_ptr_array_index(p->background_layers,i);
+        Asset *full=asset_load_background_layer(p,entry->path,error);
+        if(!full) {ok=FALSE;break;}
+        int left=320,top=256,right=-1,bottom=-1;
+        for(int y=0;y<256;y++) for(int x=0;x<320;x++) if(full->pixels[(y*320+x)*4+3]>=128) {
+            left=MIN(left,x);right=MAX(right,x);top=MIN(top,y);bottom=MAX(bottom,y);
+        }
+        if(right<left) {asset_free(full);ok=bad(error,"Depth layer is fully transparent.");break;}
+        for(int x=left;x<=right;x+=256) {
+            Asset *tile=g_new0(Asset,1);tile->width=MIN(256,right-x+1);tile->height=bottom-top+1;
+            tile->pixels=g_malloc(tile->width*tile->height*4);g_ptr_array_add(layer_images,tile);
+            for(guint y=0;y<tile->height;y++) memcpy(tile->pixels+y*tile->width*4,full->pixels+((top+y)*320+x)*4,tile->width*4);
+            Texture *t=g_new0(Texture,1);t->path=g_strdup_printf("%s#layer%u-%d",entry->path,i,x);
+            t->width=tile->width;t->height=tile->height;t->visual=tile;g_ptr_array_add(textures,t);
+            layers[layer_count].texture=t;layers[layer_count].x=x;layers[layer_count].y=top;layers[layer_count].depth=entry->depth;layer_count++;
+        }
+        asset_free(full);
+    }
+    if(ok && (background || layer_count)) ok=pack_plates(textures,background!=NULL,error);
+    else if(ok) {
+        g_ptr_array_sort(textures,texture_compare);
+        gboolean used[6]={FALSE,FALSE,FALSE,FALSE,FALSE,FALSE};
+        const int sx[]={320,576,832,320,576,832},sy[]={0,0,0,256,256,256};
+        for(guint i=0;i<textures->len && ok;i++) {
+            Texture *t=g_ptr_array_index(textures,i);int slot=-1;
+            for(int k=0;k<6;k++) if(!used[k] && t->width<=(k%3==2?192U:256U)) {slot=k;break;}
+            if(slot<0) ok=bad(error,"VRAM exhausted: only four textures can be wider than 192 pixels.");
+            else {used[slot]=TRUE;t->x=sx[slot];t->y=sy[slot];}
+        }
     }
 
     if(background && ok) {
@@ -213,6 +261,12 @@ static gboolean export_one(const Project *p,const char *directory,GError **error
     for(int k=0;k<3;k++) g_string_append_printf(source,"scene.camera[%d]=%ldL;\n",k,lround(p->camera[k]+(k==2?600:0)));
     g_string_append_printf(source,"scene.yaw=%ld;scene.pitch=%ld;scene.zoom=%ldL;\n",lround(p->view[0]*4096/360),lround(p->view[1]*4096/360),lround(p->view[2]*4096));
     g_string_append_printf(source,"scene.background_texture=%uU;\n",background_texture);
+    g_string_append_printf(source,"scene.backdrop_count=%uU;\n",layer_count);
+    for(guint i=0;i<layer_count;i++) {
+        guint index=0;while(index<textures->len && g_ptr_array_index(textures,index)!=layers[i].texture) index++;
+        g_string_append_printf(source,"scene.backdrops[%u].texture=%uU;scene.backdrops[%u].x=%d;scene.backdrops[%u].y=%d;scene.backdrops[%u].w=%u;scene.backdrops[%u].h=%u;scene.backdrops[%u].depth=%dL;\n",
+            i,index,i,layers[i].x,i,layers[i].y,i,layers[i].texture->width,i,layers[i].texture->height,i,layers[i].depth);
+    }
     g_string_append_printf(source,"scene.projection=%d;scene.active_camera=%uU;scene.camera_eye=0;scene.show_colliders=%d;\n",p->projection,p->active_camera,p->show_colliders);
     g_string_append_printf(source,"memcpy(objects,object_defaults,%u*sizeof(PsxObject));\n",p->objects->len);
     g_string_append(source,"psx_scene_init(&scene);return &scene;\n}\n");
@@ -245,7 +299,7 @@ static gboolean export_one(const Project *p,const char *directory,GError **error
     g_string_free(manifest,TRUE);
  done:
     asset_free(background);asset_free(background_tiles[0]);asset_free(background_tiles[1]);
-    g_ptr_array_unref(sounds);g_ptr_array_unref(visuals);g_ptr_array_unref(textures);g_ptr_array_unref(modules);g_ptr_array_unref(module_contents);
+    g_ptr_array_unref(layer_images);g_ptr_array_unref(sounds);g_ptr_array_unref(visuals);g_ptr_array_unref(textures);g_ptr_array_unref(modules);g_ptr_array_unref(module_contents);
     return ok;
 }
 
@@ -334,6 +388,8 @@ gboolean project_export(const Project *p,const char *directory,GError **error)
             JsonObject *manifest=json_node_get_object(json_parser_get_root(parser));
             JsonArray *ts=json_object_get_array_member(manifest,"textures"),*ms=json_object_get_array_member(manifest,"modules");
             GString *rewritten=g_string_new(code);
+            char *disc_prefix=g_strdup_printf("ASSETS\\\\S%03u\\\\",n);
+            g_string_replace(rewritten,"ASSETS\\\\",disc_prefix,0);g_free(disc_prefix);
             GHashTable *aliases=g_hash_table_new_full(g_str_hash,g_str_equal,g_free,g_free);
             share_arrays(rewritten,shared,aliases,n,&total_triangles);
             separate_samples(rewritten,samples);
@@ -353,7 +409,7 @@ gboolean project_export(const Project *p,const char *directory,GError **error)
                 char *bytes=NULL;gsize length=0;char *from=g_build_filename(sub,old,NULL),*to=g_build_filename(stage,new,NULL);
                 ok=g_file_get_contents(from,&bytes,&length,error) && g_file_set_contents(to,bytes,length,error);
                 g_free(bytes);g_free(from);g_free(to);
-                JsonNode *copy=json_node_copy(json_array_get_element(ts,k));json_object_set_string_member(json_node_get_object(copy),"file",new);
+                JsonNode *copy=json_node_copy(json_array_get_element(ts,k));json_object_set_string_member(json_node_get_object(copy),"file",new);char *disc_dir=g_strdup_printf("S%03u",n);json_object_set_string_member(json_node_get_object(copy),"directory",disc_dir);g_free(disc_dir);
                 json_array_add_element(textures,copy);texture_id++;
                 g_free(old);g_free(new);g_free(placeholder);
             }

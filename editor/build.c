@@ -160,6 +160,11 @@ static JsonParser *read_manifest(const char *output,GError **error)
                 if(!file || json_node_get_value_type(file)!=G_TYPE_STRING ||
                    !g_regex_match_simple("^T[0-9]{3}\\.TIM$",json_node_get_string(file),0,0))
                     ok=failure(error,"Invalid texture filename in manifest.");
+                if(ok && json_object_has_member(json_node_get_object(node),"directory")) {
+                    JsonNode *dir=json_object_get_member(json_node_get_object(node),"directory");
+                    if(json_node_get_value_type(dir)!=G_TYPE_STRING || !g_regex_match_simple("^S[0-9]{3}$",json_node_get_string(dir),0,0))
+                        ok=failure(error,"Invalid texture directory in manifest.");
+                }
             }
         }
     }
@@ -202,8 +207,11 @@ static gboolean verify_build(const char *output,GError **error)
         if(parser) {
             JsonArray *textures=json_object_get_array_member(json_node_get_object(json_parser_get_root(parser)),"textures");
             for(guint i=0;ok && i<json_array_get_length(textures);i++) {
-                const char *name=json_object_get_string_member(json_array_get_object_element(textures,i),"file");
-                char *discname=g_strconcat("ASSETS/",name,";1",NULL),*host=g_build_filename(output,"data",name,NULL);
+                JsonObject *texture=json_array_get_object_element(textures,i);
+                const char *name=json_object_get_string_member(texture,"file");
+                const char *dir=json_object_has_member(texture,"directory")?json_object_get_string_member(texture,"directory"):NULL;
+                char *discname=dir?g_strdup_printf("ASSETS/%s/%s;1",dir,name):g_strconcat("ASSETS/",name,";1",NULL);
+                char *host=g_build_filename(output,"data",name,NULL);
                 ok=disc_file(&disc,files,discname,host,error);g_free(discname);g_free(host);
             }
             g_object_unref(parser);
@@ -286,6 +294,12 @@ static gboolean snapshot_assets(const Project *project,const char *original,cons
                 g_free(source);g_free(destination);g_free(parent);
             }
         }
+        for(guint i=0;ok && i<view.background_layers->len;i++) {
+            BackgroundLayer *layer=g_ptr_array_index(view.background_layers,i);
+            char *target=file_at(data,layer->path),*parent=g_path_get_dirname(target);
+            ok=make_directory(parent,error) && copy_relative(original,data,layer->path,error);
+            g_free(parent);g_free(target);
+        }
         if(ok && *view.background) {
             char *target=file_at(data,view.background),*parent=g_path_get_dirname(target);
             ok=make_directory(parent,error) && copy_relative(original,data,view.background,error);
@@ -344,6 +358,7 @@ static gboolean prepare_project(Project *project,const char *root,const char *ou
         g_string_free(sources,TRUE);
         if(ok) ok=rewrite(output,"src/makefile.mak","-pedantic",diagnostics?"-pedantic-errors -DSTUDIO_DIAGNOSTICS":"-pedantic-errors",error);
         GString *entries=g_string_new("                    Directory ASSETS\n"),*log=g_string_new(NULL);
+        const char *last_directory=NULL;
         for(guint i=0;ok && i<json_array_get_length(textures);i++) {
             JsonObject *texture=json_array_get_object_element(textures,i);const char *name=json_object_get_string_member(texture,"file");
             guint width=json_object_get_int_member(texture,"width"),height=json_object_get_int_member(texture,"height");
@@ -357,10 +372,17 @@ static gboolean prepare_project(Project *project,const char *root,const char *ou
                    le16(header+16)!=width || le16(header+18)!=height) ok=failure(error,"Invalid native TIM or VRAM rectangle.");
             }
             g_free(bytes);if(ok) ok=copy_relative(src,data,name,error);
+            const char *disc_directory=json_object_has_member(texture,"directory")?json_object_get_string_member(texture,"directory"):NULL;
+            if(g_strcmp0(last_directory,disc_directory)) {
+                if(last_directory) g_string_append(entries,"                        EndDirectory\n");
+                if(disc_directory) g_string_append_printf(entries,"                        Directory %s\n",disc_directory);
+                last_directory=disc_directory;
+            }
             g_string_append_printf(entries,"                        File %s\n                            XAFileAttributes Form1 Data\n                            Source [root]\\data\\%s\n                        EndFile\n",name,name);
             g_string_append_printf(log,"Native TIM: %s %ux%u VRAM (%u,%u)\n",name,width,height,
                 (guint)json_object_get_int_member(texture,"x"),(guint)json_object_get_int_member(texture,"y"));
         }
+        if(last_directory) g_string_append(entries,"                        EndDirectory\n");
         g_string_append(entries,"                    EndDirectory\n                EndHierarchy");
         if(ok && json_array_get_length(textures)) ok=rewrite(output,"cdrom/CONF.CTI","                EndHierarchy",entries->str,error);
         if(ok) ok=write_at(output,"texture.log",log->str,log->len,error);
@@ -494,7 +516,7 @@ int studio_build_main(int argc,char **argv)
     /* The marker owns generated sources; clear them so removed Scenes/modules cannot survive. */
     if(ok) ok=remove_tree(src,&error) && copy_subtree(root,"pipeline/template/src",src,&error) && copy_subtree(root,"pipeline/cdrom",cdrom,&error);
     char *a=file_at(root,"pipeline/template/CONF.CTI"),*b=file_at(cdrom,"CONF.CTI");if(ok) ok=copy_file(a,b,&error);g_free(a);g_free(b);
-    const char *runtime[]={"object.c","object.h","camera.c","camera.h","fps.h","render.h","timing.h","frame.h","save.h"};
+    const char *runtime[]={"object.c","object.h","camera.c","camera.h","fps.h","render.h","timing.h","frame.h","save.h","icons.h"};
     char *runtime_dir=file_at(root,"runtime");for(guint i=0;ok && i<G_N_ELEMENTS(runtime);i++) ok=copy_relative(runtime_dir,src,runtime[i],&error);g_free(runtime_dir);
     if(ok) {char *text=NULL;ok=read_at(src,"camera.h",&text,NULL,&error);if(ok) {char *fixed=g_strconcat("#define PSX_RUNTIME_FIXED_ONLY 1\n",text,NULL);ok=write_at(src,"camera.h",fixed,-1,&error);g_free(fixed);}g_free(text);}
     char *temporary=file_at(output,"TEMP"),*data=file_at(output,"data");if(ok) ok=make_directory(temporary,&error) && make_directory(data,&error);g_free(temporary);g_free(data);g_free(src);g_free(cdrom);

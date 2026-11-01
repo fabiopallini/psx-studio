@@ -75,15 +75,22 @@ static int psx_gte_offset_fits(const long *offset)
 
 /* Reserve the last OT bucket for explicitly marked ground/backdrops.
  * Normal geometry retains average-depth ordering in the remaining buckets. */
+static int psx_depth_bucket(long depth,int limit)
+{
+    long bucket;
+    bucket=(depth-600)/2+256;
+    if(bucket<2) return 2;
+    if(bucket>=limit-2) return limit-3;
+    return (int)bucket;
+}
 static int psx_triangle_bucket(long points[3][3],int limit,int flags)
 {
     long depth;
     if(flags&PSX_RENDER_BACKGROUND) return limit-1;
     if(flags&PSX_RENDER_DECAL) return limit-2;
-    depth=(points[0][2]+points[1][2]+points[2][2])/6+256;
-    if(depth<2) return 2;
-    if(depth>=limit-2) return limit-3;
-    return (int)depth;
+    /* Preserve existing triangle bins when converting half-depth to camera units. */
+    depth=(points[0][2]+points[1][2]+points[2][2])/6;
+    return psx_depth_bucket(depth*2+600,limit);
 }
 
 /* Positive screen-space winding is the visible side of the inward-wound

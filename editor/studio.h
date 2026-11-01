@@ -10,6 +10,7 @@
 #define STUDIO_VERSION 3
 #define STUDIO_MAX_SCENES 16
 #define STUDIO_MAX_OBJECTS 512
+#define STUDIO_MAX_BACKGROUND_LAYERS 4
 
 typedef enum { OBJECT_MESH, OBJECT_SPRITE, OBJECT_BILLBOARD, OBJECT_CAMERA } ObjectKind;
 typedef struct { double p[3], uv[2]; } AssetVertex;
@@ -35,10 +36,11 @@ typedef struct {
     gboolean visual_attempted;
 } Object;
 typedef struct { guint id; char *name; JsonNode *data; } Scene;
+typedef struct { char *path; int depth; } BackgroundLayer;
 typedef struct {
     char *name, *path, *psyq_path, *asset_root;
     char *dosbox, *output_path, *emulator_command, *background;
-    GPtrArray *objects;
+    GPtrArray *objects,*background_layers;
     guint next_id;
     double camera[3];
     double view[3]; /* Yaw degrees, pitch degrees, zoom. */
@@ -67,6 +69,10 @@ typedef struct {
     GtkWidget *scale_panel, *camera_panel, *camera_active, *camera_zoom, *camera_projection;
     GtkWidget *visual_imports[2];
     GtkWidget *background_label, *background_remove;
+    GtkWidget *layer_selector,*layer_depth,*layer_remove,*layer_up,*layer_down;
+    int selected_layer;
+    Asset *layer_visuals[STUDIO_MAX_BACKGROUND_LAYERS];
+    gboolean layer_attempted[STUDIO_MAX_BACKGROUND_LAYERS];
     Asset *background_visual;gboolean background_attempted;
     GtkWidget *scene_selector, *scene_name, *startup_button, *collision_scene, *follow_target;
     GtkWidget *collider_offset[3], *follow_offset[3], *colliders_button;
@@ -112,12 +118,15 @@ GtkWidget *viewport_create(Studio *s);
 Asset *asset_load(const Project *p, const Object *o, GError **error);
 void asset_free(Asset *asset);
 Asset *asset_load_background(const Project *p,GError **error);
+Asset *asset_load_background_layer(const Project *p,const char *relative,GError **error);
+gboolean asset_import_background_layer(Project *p,const char *source,GError **error);
 gboolean asset_import_background(Project *p,const char *source,GError **error);
 long asset_uv_texel(double coordinate,guint size);
 gboolean asset_write_tim(const Asset *asset, const char *path, int x, int y, GError **error);
 gboolean asset_import(Project *p, Object *o, const char *source, int type, GError **error);
 char *asset_path(const Project *p, const char *relative);
 void viewport_clear_assets(Studio *s);
+int viewport_pick(Studio *s,double x,double y);
 gboolean viewport_project(const Studio *s, const double point[3], double *x, double *y);
 
 #endif

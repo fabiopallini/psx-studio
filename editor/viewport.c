@@ -4,7 +4,7 @@
 
 static double background_scale(const Studio *s)
 {
-    if(!s->project.background || !*s->project.background || !s->viewport) return 1;
+    if((!s->project.background || (!*s->project.background && !s->project.background_layers->len)) || !s->viewport) return 1;
     return MAX(.1,MIN(gtk_widget_get_width(s->viewport)/320.0,gtk_widget_get_height(s->viewport)/256.0));
 }
 
@@ -80,6 +80,10 @@ void viewport_clear_assets(Studio *s)
     if(gl) { gtk_gl_area_make_current(GTK_GL_AREA(s->viewport)); gl=!gtk_gl_area_get_error(GTK_GL_AREA(s->viewport)); }
     if(gl && s->background_visual && s->background_visual->texture_id) glDeleteTextures(1,&s->background_visual->texture_id);
     asset_free(s->background_visual);s->background_visual=NULL;s->background_attempted=FALSE;
+    for(guint i=0;i<STUDIO_MAX_BACKGROUND_LAYERS;i++) {
+        if(gl && s->layer_visuals[i] && s->layer_visuals[i]->texture_id) glDeleteTextures(1,&s->layer_visuals[i]->texture_id);
+        asset_free(s->layer_visuals[i]);s->layer_visuals[i]=NULL;s->layer_attempted[i]=FALSE;
+    }
     for(guint i=0;i<s->project.objects->len;i++) {
         Object *o=g_ptr_array_index(s->project.objects,i);
         if(gl && o->visual && o->visual->texture_id) glDeleteTextures(1,&o->visual->texture_id);
@@ -258,6 +262,31 @@ static void draw_background(Studio *s)
     glBufferData(GL_ARRAY_BUFFER,sizeof(v),v,GL_STREAM_DRAW);glDrawArrays(GL_TRIANGLES,0,6);
 }
 
+static void draw_depth_layers(Studio *s)
+{
+    for(guint i=0;i<s->project.background_layers->len;i++) {
+        BackgroundLayer *layer=g_ptr_array_index(s->project.background_layers,i);
+        if(!s->layer_attempted[i]) {
+            GError *error=NULL;s->layer_visuals[i]=asset_load_background_layer(&s->project,layer->path,&error);s->layer_attempted[i]=TRUE;
+            if(error) {studio_status(s,error->message);g_error_free(error);}
+        }
+        Asset *a=s->layer_visuals[i];if(!a) continue;
+        if(!a->texture_id) {
+            glGenTextures(1,&a->texture_id);glBindTexture(GL_TEXTURE_2D,a->texture_id);
+            glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,320,256,0,GL_RGBA,GL_UNSIGNED_BYTE,a->pixels);
+            glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+        }
+        double scale=background_scale(s),x=320*scale/gtk_widget_get_width(s->viewport),y=256*scale/gtk_widget_get_height(s->viewport);
+        double depth=layer->depth,z=s->project.projection?((PSX_CAMERA_FAR+PSX_CAMERA_NEAR)-2.0*PSX_CAMERA_FAR*PSX_CAMERA_NEAR/depth)/(PSX_CAMERA_FAR-PSX_CAMERA_NEAR):(depth-600)/131072;
+        GLfloat v[]={-x,y,z,1,0,0, x,y,z,1,1,0, x,-y,z,1,1,1, -x,y,z,1,0,0, x,-y,z,1,1,1, -x,-y,z,1,0,1};
+        glEnable(GL_DEPTH_TEST);glDepthFunc(GL_LEQUAL);glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,a->texture_id);
+        glUniform1i(glGetUniformLocation(s->program,"textured"),1);glUniform4f(glGetUniformLocation(s->program,"tint"),1,1,1,1);
+        glBufferData(GL_ARRAY_BUFFER,sizeof(v),v,GL_STREAM_DRAW);glDrawArrays(GL_TRIANGLES,0,6);
+        glDepthFunc(GL_LESS);glDisable(GL_DEPTH_TEST);
+    }
+}
+
 static gboolean render(GtkGLArea *area, GdkGLContext *context, Studio *s)
 {
     (void)context;
@@ -286,6 +315,7 @@ static gboolean render(GtkGLArea *area, GdkGLContext *context, Studio *s)
         if(o->visual) draw_asset(s,o);else box(s,o,(int)i==s->selected,FALSE);
         if (s->project.show_colliders) box(s, o, FALSE, TRUE);
     }
+    draw_depth_layers(s);
     /* Selection is an overlay after every object, so textured geometry and
      * overlapping objects cannot hide it. Bounds follow the actual asset. */
     if (s->selected>=0 && (guint)s->selected<s->project.objects->len) {
@@ -311,19 +341,88 @@ static gboolean render(GtkGLArea *area, GdkGLContext *context, Studio *s)
     return TRUE;
 }
 
+/* Intersect in camera space, using the same transformed triangles as the
+ * preview. The ray's Z component is one, so t is a camera-depth offset. */
+static gboolean pick_triangle(const PsxCamera *c,const double origin[3],const double ray[3],
+    double points[3][3],double weights[3],double *depth)
+{
+    double edge[2][3],cross[3],offset[3],q[3];
+    for(int k=0;k<3;k++) {edge[0][k]=points[1][k]-points[0][k];edge[1][k]=points[2][k]-points[0][k];}
+    for(int k=0;k<3;k++) cross[k]=ray[(k+1)%3]*edge[1][(k+2)%3]-ray[(k+2)%3]*edge[1][(k+1)%3];
+    double det=0;for(int k=0;k<3;k++) det+=edge[0][k]*cross[k];
+    if(fabs(det)<1e-10) return FALSE;
+    for(int k=0;k<3;k++) offset[k]=origin[k]-points[0][k];
+    double u=0;for(int k=0;k<3;k++) u+=offset[k]*cross[k]/det;
+    if(u<0 || u>1) return FALSE;
+    for(int k=0;k<3;k++) q[k]=offset[(k+1)%3]*edge[0][(k+2)%3]-offset[(k+2)%3]*edge[0][(k+1)%3];
+    double v=0,t=0;for(int k=0;k<3;k++) {v+=ray[k]*q[k]/det;t+=edge[1][k]*q[k]/det;}
+    if(v<0 || u+v>1 || t<0) return FALSE;
+    *depth=origin[2]+t;
+    if(c->projection==PSX_PROJECTION_PERSPECTIVE) {
+        if(*depth<PSX_CAMERA_NEAR || *depth>PSX_CAMERA_FAR) return FALSE;
+    } else if(*depth<PSX_CAMERA_DISTANCE-131072 || *depth>PSX_CAMERA_DISTANCE+131072) return FALSE;
+    weights[0]=1-u-v;weights[1]=u;weights[2]=v;
+    /* Textures are affine in screen space in both preview backends. */
+    if(c->projection==PSX_PROJECTION_PERSPECTIVE)
+        for(int k=0;k<3;k++) weights[k]*=points[k][2]/ *depth;
+    return TRUE;
+}
+
+int viewport_pick(Studio *s,double x,double y)
+{
+    PsxCamera c=camera(s);
+    double sx=(x-gtk_widget_get_width(s->viewport)/2.0)/c.zoom;
+    double sy=(y-gtk_widget_get_height(s->viewport)/2.0)/c.zoom;
+    double origin[3]={sx,sy,PSX_CAMERA_DISTANCE-131072},ray[3]={0,0,1};
+    if(c.projection==PSX_PROJECTION_PERSPECTIVE) {
+        origin[0]=origin[1]=origin[2]=0;ray[0]=sx/PSX_CAMERA_DISTANCE;ray[1]=sy/PSX_CAMERA_DISTANCE;
+    }
+    int hit=-1;double nearest=G_MAXDOUBLE;gboolean nearest_wire=TRUE;
+    for(guint i=0;i<s->project.objects->len;i++) {
+        Object *o=g_ptr_array_index(s->project.objects,i),copy=*o;
+        project_camera_position(&s->project,o,copy.position);
+        if(o->kind!=OBJECT_CAMERA && !o->visual_attempted && (*o->asset || *o->texture)) {
+            o->visual=asset_load(&s->project,o,NULL);o->visual_attempted=TRUE;
+        }
+        Asset *a=o->visual,*fallback=NULL;
+        if(!a || o->kind==OBJECT_CAMERA) {
+            Object probe=copy;probe.asset="";probe.texture="";
+            if(o->kind==OBJECT_CAMERA) probe.kind=OBJECT_MESH;
+            a=fallback=asset_load(&s->project,&probe,NULL);
+        }
+        if(!a) continue;
+        gboolean wire=fallback!=NULL;
+        for(guint j=0;j+2<a->vertices->len;j+=3) {
+            double points[3][3],weights[3],depth;
+            for(int k=0;k<3;k++) {
+                double world[3];transform(s,&copy,g_array_index(a->vertices,AssetVertex,j+k).p,world);
+                psx_camera_view(&c,world,points[k]);
+            }
+            if(!pick_triangle(&c,origin,ray,points,weights,&depth)) continue;
+            /* Wire boxes are authoring aids, not opaque surfaces: a room's
+             * collision volumes must not swallow clicks on visible actors. */
+            if(hit>=0 && ((wire && !nearest_wire) || (wire==nearest_wire && depth>=nearest))) continue;
+            if(a->pixels) {
+                double uv[2]={0,0};
+                for(int k=0;k<3;k++) {
+                    AssetVertex *vertex=&g_array_index(a->vertices,AssetVertex,j+k);
+                    uv[0]+=weights[k]*(asset_uv_texel(vertex->uv[0],a->width)+.5);
+                    uv[1]+=weights[k]*(asset_uv_texel(vertex->uv[1],a->height)+.5);
+                }
+                int tx=CLAMP((int)floor(uv[0]),0,(int)a->width-1),ty=CLAMP((int)floor(uv[1]),0,(int)a->height-1);
+                if(a->pixels[(ty*a->width+tx)*4+3]<128) continue;
+            }
+            nearest=depth;nearest_wire=wire;hit=(int)i;
+        }
+        asset_free(fallback);
+    }
+    return hit;
+}
+
 static void drag_begin(GtkGestureDrag *gesture, double x, double y, Studio *s)
 {
     (void)gesture;
-    int hit = -1;
-    double best = 45;
-    for (guint i = 0; i < s->project.objects->len; i++) {
-        Object *o = g_ptr_array_index(s->project.objects, i);
-        double px, py;
-        double position[3];project_camera_position(&s->project,o,position);
-        if(!viewport_project(s, position, &px, &py)) continue;
-        double distance = hypot(px-x, py-y);
-        if (distance < best) { best = distance; hit = i; }
-    }
+    int hit=viewport_pick(s,x,y);
     s->history_key=NULL;
     s->selected = hit; s->dragging = hit >= 0;
     if (hit >= 0) {
@@ -387,18 +486,21 @@ static void orbit_end(GtkGestureDrag *gesture, double dx, double dy, Studio *s)
 
 static gboolean scroll(GtkEventControllerScroll *controller, double dx, double dy, Studio *s)
 {
-    static char pan_history;
+    static char pan_history,vertical_history;
     GdkModifierType state=gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(controller));
-    gboolean pan=(state&GDK_SHIFT_MASK)!=0;
+    gboolean vertical=(state&GDK_CONTROL_MASK)!=0;
+    gboolean pan=vertical || (state&GDK_SHIFT_MASK)!=0;
     /* Some devices translate Shift+wheel into horizontal scroll deltas. */
     double delta=pan && dy==0?dx:dy;
     if(delta==0) return FALSE;
-    studio_checkpoint(s,pan?(gpointer)&pan_history:(gpointer)controller);
+    studio_checkpoint(s,vertical?(gpointer)&vertical_history:pan?(gpointer)&pan_history:(gpointer)controller);
     if(pan) {
         PsxCamera c=camera(s);
         double distance=delta*32/c.zoom;
         /* Camera-local right is independent of pitch; translate, never orbit. */
         double right[3]={c.cy,0,-c.sy};
+        /* Ctrl pans along world Y, regardless of orbit pitch or yaw. */
+        if(vertical) {right[0]=right[2]=0;right[1]=-1;}
         for(int k=0;k<3;k++) if(fabs(right[k])>1e-9) {
             double a=(-32767-s->project.camera[k])/right[k];
             double b=(32767-s->project.camera[k])/right[k];

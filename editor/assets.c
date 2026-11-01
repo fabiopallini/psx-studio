@@ -252,7 +252,7 @@ long asset_uv_texel(double coordinate,guint size)
 
 /* Scene plates are decoded on the host and sampled to the PAL framebuffer.
  * Ordinary mesh textures retain their independent 256x256 validation. */
-static Asset *background_bytes(const char *bytes,gsize size,GError **error)
+static Asset *background_bytes(const char *bytes,gsize size,gboolean alpha,GError **error)
 {
     png_image image;memset(&image,0,sizeof(image));image.version=PNG_IMAGE_VERSION;
     if(size>4*1024*1024 || !png_image_begin_read_from_memory(&image,bytes,size)) {
@@ -269,8 +269,8 @@ static Asset *background_bytes(const char *bytes,gsize size,GError **error)
     for(guint y=0;y<256;y++) for(guint x=0;x<320;x++) {
         const guchar *pixel=source+(((guint64)(2*y+1)*height/512)*width+(guint64)(2*x+1)*width/640)*4;
         guchar *out=a->pixels+(y*320+x)*4;
-        for(int k=0;k<3;k++) out[k]=(pixel[k]*pixel[3]+127)/255;
-        out[3]=255;
+        for(int k=0;k<3;k++) out[k]=alpha?pixel[k]:(pixel[k]*pixel[3]+127)/255;
+        out[3]=alpha?pixel[3]:255;
     }
     g_free(source);return a;
 }
@@ -281,16 +281,29 @@ Asset *asset_load_background(const Project *p,GError **error)
     char *path=asset_path(p,p->background),*bytes=NULL;gsize size=0;
     if(!path) {bad(error,"Save the project before loading its background.");return NULL;}
     gboolean ok=g_file_get_contents(path,&bytes,&size,error);g_free(path);
-    Asset *a=ok?background_bytes(bytes,size,error):NULL;g_free(bytes);return a;
+    Asset *a=ok?background_bytes(bytes,size,FALSE,error):NULL;g_free(bytes);return a;
 }
 
-gboolean asset_import_background(Project *p,const char *source,GError **error)
+Asset *asset_load_background_layer(const Project *p,const char *relative,GError **error)
+{
+    char *path=asset_path(p,relative),*bytes=NULL;gsize size=0;
+    if(!path) {bad(error,"Save the project before loading a depth layer.");return NULL;}
+    gboolean ok=g_file_get_contents(path,&bytes,&size,error);g_free(path);
+    Asset *a=ok?background_bytes(bytes,size,TRUE,error):NULL;g_free(bytes);return a;
+}
+static gboolean import_plate(Project *p,const char *source,gboolean layer,GError **error)
 {
     if(!p->path) return bad(error,"Save the project before importing a scene background.");
+    if(layer && p->background_layers->len>=STUDIO_MAX_BACKGROUND_LAYERS) return bad(error,"A Scene supports at most four depth layers.");
     char *bytes=NULL;gsize size=0;
     if(!g_file_get_contents(source,&bytes,&size,error)) return FALSE;
-    Asset *check=background_bytes(bytes,size,error);
+    Asset *check=background_bytes(bytes,size,layer,error);
     if(!check) {g_free(bytes);return FALSE;}
+    if(layer) {
+        gboolean visible=FALSE;
+        for(guint i=0;i<320*256;i++) if(check->pixels[i*4+3]>=128) {visible=TRUE;break;}
+        if(!visible) {asset_free(check);g_free(bytes);return bad(error,"Depth layer is fully transparent.");}
+    }
     asset_free(check);
     char *hash=g_compute_checksum_for_data(G_CHECKSUM_SHA256,(guchar*)bytes,size);
     char *name=g_strdup_printf("%.16s.png",hash),*dir=project_data_path(p->path);
@@ -298,6 +311,17 @@ gboolean asset_import_background(Project *p,const char *source,GError **error)
     gboolean ok=g_mkdir_with_parents(dir,0755)==0;
     if(ok) ok=g_file_set_contents_full(target,bytes,size,G_FILE_SET_CONTENTS_CONSISTENT,0644,error);
     else bad(error,"Cannot create the project data folder.");
-    if(ok) {g_free(p->background);p->background=g_strdup(name);p->dirty=TRUE;}
+    if(ok) {
+        if(layer) {
+            BackgroundLayer *entry=g_new0(BackgroundLayer,1);entry->path=g_strdup(name);entry->depth=600;
+            g_ptr_array_add(p->background_layers,entry);
+        } else {g_free(p->background);p->background=g_strdup(name);}
+        p->dirty=TRUE;
+    }
     g_free(hash);g_free(name);g_free(dir);g_free(target);g_free(bytes);return ok;
 }
+
+gboolean asset_import_background(Project *p,const char *source,GError **error)
+{ return import_plate(p,source,FALSE,error); }
+gboolean asset_import_background_layer(Project *p,const char *source,GError **error)
+{ return import_plate(p,source,TRUE,error); }

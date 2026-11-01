@@ -62,6 +62,11 @@ static void invalid_open_preserves_state(void)
 {
     const char *bad[] = {
         "[]", "{", "{\"version\":2}",
+        "{\"version\":3,\"name\":\"p\",\"psyq_path\":\"\",\"camera\":[0,0,0],\"objects\":[],\"background_layers\":7}",
+        "{\"version\":3,\"name\":\"p\",\"psyq_path\":\"\",\"camera\":[0,0,0],\"objects\":[],\"background_layers\":[{\"path\":\"x.png\",\"depth\":0}]}",
+        "{\"version\":3,\"name\":\"p\",\"psyq_path\":\"\",\"camera\":[0,0,0],\"objects\":[],\"background_layers\":[{\"path\":\"../bad.png\",\"depth\":600}]}",
+        "{\"version\":3,\"name\":\"p\",\"psyq_path\":\"\",\"camera\":[0,0,0],\"objects\":[],\"background_layers\":[{\"path\":\"x.png\",\"depth\":70000}]}",
+        "{\"version\":3,\"name\":\"p\",\"psyq_path\":\"\",\"camera\":[0,0,0],\"objects\":[],\"background_layers\":[{\"path\":\"x.png\",\"depth\":600.5}]}",
         "{\"version\":3,\"name\":\"p\",\"psyq_path\":\"\",\"camera\":[0,0,0],\"objects\":[],\"background\":7}",
         "{\"version\":3,\"name\":\"p\",\"psyq_path\":\"\",\"camera\":[0,0,0],\"objects\":[],\"background\":\"../escape.png\"}",
         "{\"version\":1,\"name\":7,\"psyq_path\":\"\",\"camera\":[0,0,0],\"objects\":[]}",
@@ -719,8 +724,7 @@ static void scene_background(void)
         Object *o=project_add(&p,OBJECT_SPRITE);char *name=g_strdup_printf("regular-%u.png",i),*destination=asset_path(&p,name);
         g_assert_true(g_file_set_contents(destination,png_bytes,png_size,&error));g_free(destination);
         g_free(o->texture);o->texture=name;
-        if(i<4) {g_assert_true(project_export(&p,directory,&error));g_assert_no_error(error);}
-        else {g_assert_false(project_export(&p,directory,&error));g_assert_nonnull(error);g_clear_error(&error);}
+        g_assert_true(project_export(&p,directory,&error));g_assert_no_error(error);
     }
     g_ptr_array_remove_index(p.objects,p.objects->len-1);g_free(regular);g_free(png_bytes);
     compile_export(&p,
@@ -736,7 +740,7 @@ static void scene_background(void)
         char *name=g_strdup_printf("regular-%u.png",i),*target=asset_path(&p,name);
         g_assert_true(png_image_write_to_file(&wide,target,FALSE,wide_pixels,0,NULL));g_free(name);g_free(target);
     }
-    g_assert_false(project_export(&p,directory,&error));g_assert_nonnull(error);g_clear_error(&error);
+    g_assert_true(project_export(&p,directory,&error));g_assert_no_error(error);
     char *font_safe=asset_path(&p,"regular-0.png");wide.width=128;
     g_assert_true(png_image_write_to_file(&wide,font_safe,FALSE,wide_pixels,0,NULL));g_free(font_safe);
     g_assert_true(project_export(&p,directory,&error));g_assert_no_error(error);
@@ -751,6 +755,68 @@ static void scene_background(void)
     g_free(p.background);p.background=g_strdup("../escape.png");g_assert_false(project_validate(&p,&error));g_clear_error(&error);
     g_free(p.background);p.background=g_strdup("");
     project_clear(&p);project_clear(&q);g_free(reference);g_free(directory);g_free(copy);g_free(source);g_free(file);
+}
+
+static void scene_depth_layers(void)
+{
+    Project p,q;project_init(&p);project_init(&q);GError *error=NULL;
+    char *file=path("layers.psx"),*source=path("cutout.png"),*base=fixture_asset("layer-base.png");
+    png_image image;memset(&image,0,sizeof(image));image.version=PNG_IMAGE_VERSION;
+    image.width=320;image.height=256;image.format=PNG_FORMAT_RGBA;
+    guchar *pixels=g_malloc0(320*256*4);
+    for(int y=110;y<182;y++) for(int x=80;x<240;x++) {
+        guchar *pixel=pixels+(y*320+x)*4;pixel[0]=224;pixel[1]=120;pixel[2]=48;pixel[3]=255;
+    }
+    pixels[(130*320+100)*4+3]=0;
+    g_assert_true(png_image_write_to_file(&image,source,FALSE,pixels,0,NULL));g_free(pixels);
+    g_assert_false(asset_import_background_layer(&p,source,&error));g_clear_error(&error);
+    g_assert_true(project_save(&p,file,&error));g_assert_true(asset_import_background(&p,base,&error));
+    char *blank=path("transparent-layer.png");guchar *empty=g_malloc0(320*256*4);
+    g_assert_true(png_image_write_to_file(&image,blank,FALSE,empty,0,NULL));g_free(empty);
+    g_assert_false(asset_import_background_layer(&p,blank,&error));g_clear_error(&error);g_free(blank);
+    g_assert_cmpuint(p.background_layers->len,==,0);
+    g_assert_true(asset_import_background_layer(&p,source,&error));g_assert_true(asset_import_background_layer(&p,source,&error));
+    BackgroundLayer *first=g_ptr_array_index(p.background_layers,0);first->depth=570;
+    ((BackgroundLayer*)g_ptr_array_index(p.background_layers,1))->depth=700;
+    Asset *mask=asset_load_background_layer(&p,first->path,&error);g_assert_no_error(error);
+    g_assert_cmpuint(mask->pixels[3],==,0);g_assert_cmpuint(mask->pixels[(111*320+81)*4+3],==,255);
+    g_assert_cmpuint(mask->pixels[(130*320+100)*4+3],==,0);asset_free(mask);
+    g_assert_nonnull(project_scene_add(&p,"Without layers"));g_assert_cmpuint(p.background_layers->len,==,0);
+    g_assert_true(project_scene_switch(&p,1,&error));g_assert_cmpuint(p.background_layers->len,==,2);
+    g_assert_cmpint(((BackgroundLayer*)g_ptr_array_index(p.background_layers,0))->depth,==,570);
+    for(guint i=0;i<6;i++) {
+        char *fixture=fixture_asset("layer-object.png"),*bytes=NULL;gsize length;
+        g_assert_true(g_file_get_contents(fixture,&bytes,&length,&error));g_free(fixture);
+        char *name=g_strdup_printf("item-%u.png",i),*target=asset_path(&p,name);
+        g_assert_true(g_file_set_contents(target,bytes,length,&error));g_free(bytes);g_free(target);
+        Object *o=project_add(&p,OBJECT_SPRITE);g_free(o->texture);o->texture=name;
+    }
+    compile_export(&p,
+        "#include \"scene.h\"\n#include <assert.h>\nint main(void){PsxScene *s;unsigned int i,j;s=studio_scene_load_id(1);"
+        "assert(s->backdrop_count==2 && studio_texture_count==10 && s->background_texture);"
+        "assert(s->backdrops[0].depth==570 && s->backdrops[1].depth==700);"
+        "assert(s->backdrops[0].x==80 && s->backdrops[0].y==110 && s->backdrops[0].w==160 && s->backdrops[0].h==72);"
+        "for(i=0;i<studio_texture_count;i++){PsxTexture *t;t=&studio_textures[i];"
+        "assert(t->x>=320 && t->x+t->w<=1024 && t->y+t->h<=512);"
+        "assert(t->x%64+t->w<=256 && t->y%256+t->h<=256);"
+        "assert(t->x+t->w<=960 || t->y+t->h<=256);"
+        "for(j=i+1;j<studio_texture_count;j++)assert(t->x+t->w<=studio_textures[j].x || studio_textures[j].x+studio_textures[j].w<=t->x ||"
+        "t->y+t->h<=studio_textures[j].y || studio_textures[j].y+studio_textures[j].h<=t->y);}"
+        "s=studio_scene_load_id(2);assert(!s->backdrop_count && !s->background_texture);"
+        "s=studio_scene_load_id(1);assert(s->backdrop_count==2);return 0;}\n","depth-layer-linkage");
+    g_assert_true(project_save(&p,file,&error));g_assert_true(project_load(&q,file,&error));g_assert_cmpuint(q.background_layers->len,==,2);
+    char *copy=path("layers-copy.psx");g_assert_true(project_save(&q,copy,&error));
+    char *mask_path=asset_path(&q,((BackgroundLayer*)g_ptr_array_index(q.background_layers,0))->path);
+    g_assert_true(g_file_test(mask_path,G_FILE_TEST_IS_REGULAR));g_assert_cmpint(g_remove(mask_path),==,0);
+    char *missing=path("layers-missing.psx");g_assert_false(project_save(&q,missing,&error));g_clear_error(&error);
+    g_assert_true(asset_import_background_layer(&p,source,&error));g_assert_true(asset_import_background_layer(&p,source,&error));
+    g_assert_false(asset_import_background_layer(&p,source,&error));g_clear_error(&error);g_assert_cmpuint(p.background_layers->len,==,4);
+    /* Real capacity exhaustion, rather than an artificial per-image-slot ceiling. */
+    png_image large;memset(&large,0,sizeof(large));large.version=PNG_IMAGE_VERSION;large.width=large.height=256;large.format=PNG_FORMAT_RGBA;
+    guchar *solid=g_malloc(256*256*4);memset(solid,255,256*256*4);
+    for(guint i=0;i<6;i++) {Object *o=g_ptr_array_index(p.objects,i);char *target=asset_path(&p,o->texture);g_assert_true(png_image_write_to_file(&large,target,FALSE,solid,0,NULL));g_free(target);}
+    g_free(solid);char *output=path("layer-vram-overflow");g_assert_false(project_export(&p,output,&error));g_clear_error(&error);
+    g_free(output);g_free(missing);g_free(mask_path);g_free(copy);g_free(base);g_free(source);g_free(file);project_clear(&p);project_clear(&q);
 }
 
 static void last_ward_example(void)
@@ -801,6 +867,7 @@ int main(int argc, char **argv)
     g_test_add_func("/export/sound-assets",sound_assets);
     g_test_add_func("/export/scene-background",scene_background);
     g_test_add_func("/export/last-ward-example",last_ward_example);
+    g_test_add_func("/export/depth-layers",scene_depth_layers);
     g_test_add_func("/export/c89-runtime-scene", export_c89_scene);
     g_test_add_func("/export/empty-and-capacity", export_empty_and_capacity);
     g_test_add_func("/export/rejects-unsupported", export_rejects_unsupported);

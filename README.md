@@ -21,12 +21,17 @@ and converted directly to the PlayStation VAG format.
 5. Choose **Build → Build**, then **Run emulator** to play.
 
 A Scene can also use a pre-rendered PNG background: choose **Background...** in
-the Scenes panel, then align a fixed 3D camera with the image. Actors and
-collisions continue to use the normal 3D runtime.
+the **Background** tab on the right, then align a fixed 3D camera with the image. Actors and
+collisions continue to use the normal 3D runtime. Use **Add layer...** for
+transparent foreground PNGs and set **Layer depth** to let actors pass behind
+painted counters or pillars.
 
 The editor view supports perspective and orthographic views. Right-drag to orbit,
-scroll to zoom, and use Shift + scroll to move sideways. Select objects to edit
-properties in the tabs on the right. Use Scenes to create multiple levels.
+scroll to zoom, Shift + scroll to move sideways, and Ctrl + scroll to move
+along the Y axis. Select objects to edit
+properties in the tabs on the right. Clicking a model selects its surface;
+overlapping objects select the nearest surface, and transparent sprite pixels
+let clicks through. Use Scenes to create multiple levels.
 
 Keep `MyGame.psx` and its `MyGame_psx_data/` folder together: the folder contains
 its models, textures, audio and C modules.
@@ -115,9 +120,14 @@ this repository's **GitHub Releases**, rather than in the source repository:
 - **Shadow Ops** (`shadow-ops.psx`): a tactical shooter with enemies, shooting,
   pickups, gated passages and manual memory-card checkpoints.
 - **Last Ward** (`last-ward.psx`): an original fixed-camera sanitarium demo with
-  pre-rendered backgrounds, an armed 3D survivor, two connected rooms, eight
-  zombies and pixel-art blood impacts. Editable door triggers allow travel
-  between rooms while preserving health, ammunition and enemy state.
+  pre-rendered backgrounds, an armed 3D survivor, five connected rooms with
+  different fixed camera angles, twenty zombies and pixel-art blood impacts. A compact graphical inventory carries a
+  glinting Sprite3D counter key used to unlock the ward. Press Cross at editable
+  door triggers to travel
+  between rooms while preserving inventory, health, ammunition and defeated enemies.
+  Surviving enemies restart at their spawn points when an area is revisited.
+  Ammo Sprite3Ds are scattered through the rooms, and the pharmacy demonstrates
+  a transparent counter layer that occludes actors at the correct depth.
 
 Download and extract the ZIP, then use **File → Open** in PSX Studio to select
 a `.psx` project. Keep each project's accompanying `*_psx_data/` folder

@@ -19,6 +19,7 @@ Scene *project_scene_find(const Project *p,guint id)
 static void transfer_view(Project *p,Project *q)
 {
     g_ptr_array_unref(p->objects);p->objects=q->objects;q->objects=NULL;
+    g_ptr_array_unref(p->background_layers);p->background_layers=q->background_layers;q->background_layers=NULL;
     p->next_id=q->next_id;p->active_camera=q->active_camera;
     g_free(p->background);p->background=q->background;q->background=NULL;
     memcpy(p->camera,q->camera,sizeof(p->camera));memcpy(p->view,q->view,sizeof(p->view));

@@ -104,6 +104,22 @@ void studio_refresh(Studio *s)
 {
     if(s->closing) return;
     s->refreshing = TRUE;
+    if(s->layer_selector) {
+        GtkStringList *names=gtk_string_list_new(NULL);gtk_string_list_append(names,"No layer selected");
+        for(guint i=0;i<s->project.background_layers->len;i++) {
+            BackgroundLayer *layer=g_ptr_array_index(s->project.background_layers,i);
+            char *base=g_path_get_basename(layer->path),*label=g_strdup_printf("%u: %s",i+1,base);
+            gtk_string_list_append(names,label);g_free(label);g_free(base);
+        }
+        if(s->selected_layer<0 || s->selected_layer>=(int)s->project.background_layers->len) s->selected_layer=s->project.background_layers->len?0:-1;
+        gtk_drop_down_set_model(GTK_DROP_DOWN(s->layer_selector),G_LIST_MODEL(names));g_object_unref(names);
+        gtk_drop_down_set_selected(GTK_DROP_DOWN(s->layer_selector),s->selected_layer+1);
+        gboolean selected=s->selected_layer>=0;
+        gtk_widget_set_sensitive(s->layer_depth,selected);gtk_widget_set_sensitive(s->layer_remove,selected);
+        gtk_widget_set_sensitive(s->layer_up,selected && s->selected_layer>0);
+        gtk_widget_set_sensitive(s->layer_down,selected && s->selected_layer+1<(int)s->project.background_layers->len);
+        gtk_spin_button_set_value(GTK_SPIN_BUTTON(s->layer_depth),selected?((BackgroundLayer*)g_ptr_array_index(s->project.background_layers,s->selected_layer))->depth:600);
+    }
     if(s->background_label) {
         char *name=*s->project.background?g_path_get_basename(s->project.background):g_strdup("No background");
         gtk_label_set_text(GTK_LABEL(s->background_label),name);g_free(name);
@@ -204,8 +220,8 @@ void studio_refresh(Studio *s)
     if(s->frame_button) gtk_check_button_set_active(GTK_CHECK_BUTTON(s->frame_button),s->project.show_game_frame);
     if(s->drag_plane) gtk_drop_down_set_selected(GTK_DROP_DOWN(s->drag_plane),s->project.drag_axis);
     if(s->drag_hint) gtk_label_set_text(GTK_LABEL(s->drag_hint),s->project.drag_axis==1?
-        "Left drag: X/Z | Right drag: orbit | Wheel: zoom | Shift+wheel: pan":s->project.drag_axis==2?
-        "Left drag: X/Y | Right drag: orbit | Wheel: zoom | Shift+wheel: pan":"Left drag: Y/Z | Right drag: orbit | Wheel: zoom | Shift+wheel: pan");
+        "Left drag: X/Z | Right drag: orbit | Wheel: zoom | Shift+wheel: sideways | Ctrl+wheel: Y":s->project.drag_axis==2?
+        "Left drag: X/Y | Right drag: orbit | Wheel: zoom | Shift+wheel: sideways | Ctrl+wheel: Y":"Left drag: Y/Z | Right drag: orbit | Wheel: zoom | Shift+wheel: sideways | Ctrl+wheel: Y");
     if(s->view_preset) {
         double yaw=s->project.view[0],pitch=s->project.view[1];
         int preset=pitch==90?1:pitch==-90?2:pitch!=0?0:yaw==0?3:fabs(yaw)==180?4:yaw==-90?5:yaw==90?6:0;
@@ -612,9 +628,12 @@ static void imported(GObject *source,GAsyncResult *result,gpointer data)
             g_task_run_in_thread(task,audio_import_worker);g_object_unref(task);
             g_object_unref(file);g_clear_error(&error);return;
         }
-        if(type==4) {
+        if(type==4 || type==5) {
             studio_checkpoint(s,NULL);viewport_clear_assets(s);
-            if(path && asset_import_background(&s->project,path,&error)) {studio_refresh(s);studio_status(s,"Scene background imported. Use a fixed camera to align the 3D space.");}
+            if(path && (type==4?asset_import_background(&s->project,path,&error):asset_import_background_layer(&s->project,path,&error))) {
+                if(type==5) s->selected_layer=(int)s->project.background_layers->len-1;
+                studio_refresh(s);studio_status(s,type==4?"Scene background imported. Use a fixed camera to align the 3D space.":"Depth layer imported. Set its camera-space depth; alpha defines the occluding region.");
+            }
             else if(error) studio_status(s,error->message);
             g_free(path);g_object_unref(file);g_clear_error(&error);return;
         }
@@ -627,19 +646,19 @@ static void imported(GObject *source,GAsyncResult *result,gpointer data)
 }
 static void import_asset(Studio *s,int type)
 {
-    const char *problem=type!=3 && type!=4 && !selected(s)?"Select an object before importing assets.":
+    const char *problem=type!=3 && type!=4 && type!=5 && !selected(s)?"Select an object before importing assets.":
         !s->project.path?"Save the project before importing assets.":NULL;
     if(problem) {
         studio_status(s,problem);
         GtkAlertDialog *alert=gtk_alert_dialog_new("%s",problem);
-        gtk_alert_dialog_set_detail(alert,type!=3 && type!=4 && !selected(s)?
+        gtk_alert_dialog_set_detail(alert,type!=3 && type!=4 && type!=5 && !selected(s)?
             "Choose an object in the list, then click Import again.":
             "Use Save to choose a project location, then click Import again. Imported files are copied into the project's data folder.");
         gtk_alert_dialog_show(alert,GTK_WINDOW(s->window));g_object_unref(alert);return;
     }
-    GtkFileDialog *dialog=gtk_file_dialog_new();gtk_file_dialog_set_modal(dialog,TRUE);gtk_file_dialog_set_title(dialog,type==0?"Import OBJ":type==1?"Import PNG texture":type==2?"Import C89 module":type==4?"Import scene background PNG":"Import WAV audio");
-    GtkFileFilter *filter=gtk_file_filter_new();gtk_file_filter_add_pattern(filter,type==0?"*.obj":(type==1 || type==4)?"*.png":type==2?"*.c":"*.wav");
-    gtk_file_filter_add_pattern(filter,type==0?"*.OBJ":(type==1 || type==4)?"*.PNG":type==2?"*.C":"*.WAV");
+    GtkFileDialog *dialog=gtk_file_dialog_new();gtk_file_dialog_set_modal(dialog,TRUE);gtk_file_dialog_set_title(dialog,type==0?"Import OBJ":type==1?"Import PNG texture":type==2?"Import C89 module":type==4?"Import scene background PNG":type==5?"Import depth layer PNG":"Import WAV audio");
+    GtkFileFilter *filter=gtk_file_filter_new();gtk_file_filter_add_pattern(filter,type==0?"*.obj":(type==1 || type==4 || type==5)?"*.png":type==2?"*.c":"*.wav");
+    gtk_file_filter_add_pattern(filter,type==0?"*.OBJ":(type==1 || type==4 || type==5)?"*.PNG":type==2?"*.C":"*.WAV");
     GListStore *filters=g_list_store_new(GTK_TYPE_FILE_FILTER);g_list_store_append(filters,filter);
     gtk_file_dialog_set_filters(dialog,G_LIST_MODEL(filters));g_object_unref(filters);g_object_unref(filter);
     if(type==3) {
@@ -660,6 +679,35 @@ static void remove_background_clicked(GtkButton *button,Studio *s)
     (void)button;if(!*s->project.background) return;
     studio_checkpoint(s,NULL);viewport_clear_assets(s);g_free(s->project.background);s->project.background=g_strdup("");
     s->project.dirty=TRUE;studio_refresh(s);
+}
+static void import_layer_clicked(GtkButton *button,Studio *s)
+{ (void)button;import_asset(s,5); }
+static void layer_selected(GObject *widget,GParamSpec *pspec,Studio *s)
+{
+    (void)pspec;if(s->refreshing || s->closing) return;
+    s->selected_layer=(int)gtk_drop_down_get_selected(GTK_DROP_DOWN(widget))-1;studio_refresh(s);
+}
+static void layer_depth_changed(GtkSpinButton *widget,Studio *s)
+{
+    if(s->refreshing || s->closing || s->selected_layer<0) return;
+    studio_checkpoint(s,widget);
+    ((BackgroundLayer*)g_ptr_array_index(s->project.background_layers,s->selected_layer))->depth=gtk_spin_button_get_value_as_int(widget);
+    s->project.dirty=TRUE;studio_refresh(s);
+}
+static void remove_layer_clicked(GtkButton *button,Studio *s)
+{
+    (void)button;if(s->selected_layer<0) return;
+    studio_checkpoint(s,NULL);viewport_clear_assets(s);g_ptr_array_remove_index(s->project.background_layers,s->selected_layer);
+    s->selected_layer=MIN(s->selected_layer,(int)s->project.background_layers->len-1);s->project.dirty=TRUE;studio_refresh(s);
+}
+static void move_layer_clicked(GtkButton *button,Studio *s)
+{
+    int next=s->selected_layer+GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button),"direction"));
+    if(s->selected_layer<0 || next<0 || next>=(int)s->project.background_layers->len) return;
+    studio_checkpoint(s,NULL);viewport_clear_assets(s);
+    gpointer entry=g_ptr_array_index(s->project.background_layers,s->selected_layer);
+    g_ptr_array_index(s->project.background_layers,s->selected_layer)=g_ptr_array_index(s->project.background_layers,next);
+    g_ptr_array_index(s->project.background_layers,next)=entry;s->selected_layer=next;s->project.dirty=TRUE;studio_refresh(s);
 }
 static void detach_clicked(GtkButton *button,Studio *s)
 {
@@ -835,7 +883,7 @@ static void inspector_tab_changed(GtkToggleButton *button, GtkStack *stack)
 
 static void inspector(Studio *s, GtkWidget *container)
 {
-    const char *tabs[]={"Object","Collision","Assets","Logic"};
+    const char *tabs[]={"Object","Collision","Assets","Logic","Background"};
     GtkWidget *pages[G_N_ELEMENTS(tabs)];
     GtkWidget *header=gtk_grid_new(), *stack=gtk_stack_new();
     gtk_grid_set_column_homogeneous(GTK_GRID(header),TRUE);
@@ -853,7 +901,7 @@ static void inspector(Studio *s, GtkWidget *container)
         gtk_widget_set_hexpand(tab,TRUE);
         if(first) gtk_toggle_button_set_group(GTK_TOGGLE_BUTTON(tab),first);
         else first=GTK_TOGGLE_BUTTON(tab);
-        gtk_grid_attach(GTK_GRID(header),tab,i,0,1,1);
+        gtk_grid_attach(GTK_GRID(header),tab,i%4,i/4,i==4?4:1,1);
         pages[i]=panel();
         GtkWidget *scroll=gtk_scrolled_window_new();
         gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),GTK_POLICY_NEVER,GTK_POLICY_AUTOMATIC);
@@ -943,6 +991,29 @@ static void inspector(Studio *s, GtkWidget *container)
     gtk_box_append(GTK_BOX(box),gtk_label_new("Change Scene destination"));
     s->collision_scene=gtk_drop_down_new_from_strings((const char*[]){"No destination",NULL});compact_dropdown(s->collision_scene);gtk_box_append(GTK_BOX(box),s->collision_scene);
     g_signal_connect(s->collision_scene,"notify::selected",G_CALLBACK(extra_selected),s);
+
+    box=pages[4];
+    gtk_box_append(GTK_BOX(box),heading("SCENE BACKGROUND"));
+    s->background_label=gtk_label_new("No background");gtk_label_set_ellipsize(GTK_LABEL(s->background_label),PANGO_ELLIPSIZE_MIDDLE);
+    gtk_box_append(GTK_BOX(box),s->background_label);
+    GtkWidget *background_buttons=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,4);gtk_box_append(GTK_BOX(box),background_buttons);
+    button(background_buttons,"Background...",G_CALLBACK(import_background_clicked),s);
+    s->background_remove=button(background_buttons,"Remove",G_CALLBACK(remove_background_clicked),s);
+    s->selected_layer=-1;
+    s->layer_selector=gtk_drop_down_new_from_strings((const char*[]){"No layer selected",NULL});compact_dropdown(s->layer_selector);
+    gtk_box_append(GTK_BOX(box),s->layer_selector);g_signal_connect(s->layer_selector,"notify::selected",G_CALLBACK(layer_selected),s);
+    GtkWidget *layer_buttons=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,4);gtk_box_append(GTK_BOX(box),layer_buttons);
+    button(layer_buttons,"Add layer...",G_CALLBACK(import_layer_clicked),s);
+    s->layer_remove=button(layer_buttons,"Remove",G_CALLBACK(remove_layer_clicked),s);
+    GtkWidget *depth_row=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,4);gtk_box_append(GTK_BOX(box),depth_row);
+    gtk_box_append(GTK_BOX(depth_row),gtk_label_new("Layer depth"));
+    s->layer_depth=gtk_spin_button_new_with_range(16,32767,10);gtk_widget_set_hexpand(s->layer_depth,TRUE);
+    gtk_box_append(GTK_BOX(depth_row),s->layer_depth);g_signal_connect(s->layer_depth,"value-changed",G_CALLBACK(layer_depth_changed),s);
+    gtk_widget_set_tooltip_text(s->layer_depth,"Camera-space depth in world units. Smaller values cover nearer objects. Use a fixed camera.");
+    GtkWidget *order_row=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,4);gtk_box_append(GTK_BOX(box),order_row);
+    s->layer_up=button(order_row,"Up",G_CALLBACK(move_layer_clicked),s);g_object_set_data(G_OBJECT(s->layer_up),"direction",GINT_TO_POINTER(-1));
+    s->layer_down=button(order_row,"Down",G_CALLBACK(move_layer_clicked),s);g_object_set_data(G_OBJECT(s->layer_down),"direction",GINT_TO_POINTER(1));
+    gtk_widget_set_tooltip_text(order_row,"Layer list order resolves equal-depth overlaps; later layers draw on top.");
 
 }
 
@@ -1339,11 +1410,6 @@ static void activate(GtkApplication *app, Studio *s)
     GtkWidget *scene_buttons=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,4);gtk_box_append(GTK_BOX(left),scene_buttons);
     button(scene_buttons,"+ Scene",G_CALLBACK(scene_add_clicked),s);button(scene_buttons,"Delete Scene",G_CALLBACK(scene_delete_clicked),s);
     s->startup_button=gtk_check_button_new_with_label("Startup Scene");gtk_box_append(GTK_BOX(left),s->startup_button);g_signal_connect(s->startup_button,"toggled",G_CALLBACK(scene_start_toggled),s);
-    s->background_label=gtk_label_new("No background");gtk_label_set_ellipsize(GTK_LABEL(s->background_label),PANGO_ELLIPSIZE_MIDDLE);
-    gtk_box_append(GTK_BOX(left),s->background_label);
-    GtkWidget *background_buttons=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,4);gtk_box_append(GTK_BOX(left),background_buttons);
-    button(background_buttons,"Background...",G_CALLBACK(import_background_clicked),s);
-    s->background_remove=button(background_buttons,"Remove",G_CALLBACK(remove_background_clicked),s);
     gtk_box_append(GTK_BOX(left), heading("OBJECTS"));
     const char *labels[] = { "+ 3D Object", "+ Sprite", "+ Sprite3D", "+ Camera" };
     for (int i = 0; i < 4; i++) {

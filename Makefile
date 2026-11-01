@@ -28,6 +28,8 @@ build/psx-studio$(EXEEXT): $(OBJECTS) Makefile
 	$(CC) $(CFLAGS) $(LDFLAGS) $(APP_LDFLAGS) $(OBJECTS) $(LDLIBS) -o $@
 build/tests$(EXEEXT): tests/project.c editor/scenes.c editor/project.c editor/export.c editor/assets.c editor/studio.h | $(OBJDIR)/
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/project.c editor/scenes.c editor/project.c editor/export.c editor/assets.c $(LDLIBS) -o $@
+build/viewport-tests$(EXEEXT): tests/viewport.c editor/viewport.c editor/project.c editor/scenes.c editor/assets.c runtime/camera.c editor/studio.h editor/viewport_shaders.h | $(OBJDIR)/
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/viewport.c editor/viewport.c editor/project.c editor/scenes.c editor/assets.c runtime/camera.c $(LDLIBS) -o $@
 build/windows/check-gl.exe: tools/check_windows_gl.c editor/viewport_shaders.h | $(OBJDIR)/
 	$(CC) -std=c11 -Wall -Wextra -Werror -Ieditor tools/check_windows_gl.c -lEGL -lGLESv2 -o $@
 windows-package: all build/windows/check-gl.exe
@@ -48,7 +50,7 @@ build/timing-tests$(EXEEXT): tests/timing.c runtime/timing.h | $(OBJDIR)/
 	$(CC) -std=c89 -pedantic-errors -Wall -Wextra -Werror tests/timing.c -o $@
 build/game-loop-tests$(EXEEXT): tests/game_loop.c tests/console/psx.h tests/console/scene.h pipeline/project-main.c runtime/timing.h runtime/object.h | $(OBJDIR)/
 	$(CC) -std=c89 -pedantic-errors -Wall -Wextra -Werror -Itests/console tests/game_loop.c -o $@
-build/frame-tests$(EXEEXT): tests/frame.c runtime/frame.h runtime/object.h | $(OBJDIR)/
+build/frame-tests$(EXEEXT): tests/frame.c runtime/frame.h runtime/object.h runtime/icons.h | $(OBJDIR)/
 	$(CC) -std=c89 -pedantic-errors -Wall -Wextra -Werror tests/frame.c -o $@
 build/checkpoint-tests$(EXEEXT): tests/checkpoint.c runtime/save.h | $(OBJDIR)/
 	$(CC) -std=c89 -pedantic-errors -Wall -Wextra -Werror tests/checkpoint.c -o $@
@@ -58,7 +60,8 @@ build/sound-tests$(EXEEXT): tests/sound.c tests/console/libspu.h pipeline/templa
 	$(CC) -std=c89 -pedantic-errors -Wall -Wextra -Werror -Itests/console -Iruntime tests/sound.c pipeline/template/src/audio.c runtime/object.c -o $@
 build/input-tests$(EXEEXT): tests/input.c runtime/object.c runtime/object.h | $(OBJDIR)/
 	$(CC) -std=c89 -pedantic-errors -Wall -Wextra -Werror tests/input.c runtime/object.c -lm -o $@
-test: build/input-tests$(EXEEXT) build/sound-tests$(EXEEXT) build/audio-tests$(EXEEXT) build/psx-studio$(EXEEXT) build/tests$(EXEEXT) build/runtime-tests$(EXEEXT) build/camera-tests$(EXEEXT) $(OBJDIR)/camera-fixed.o build/fps-tests$(EXEEXT) build/render-cache-tests$(EXEEXT) build/timing-tests$(EXEEXT) build/game-loop-tests$(EXEEXT) build/frame-tests$(EXEEXT) build/checkpoint-tests$(EXEEXT)
+test: build/viewport-tests$(EXEEXT) build/input-tests$(EXEEXT) build/sound-tests$(EXEEXT) build/audio-tests$(EXEEXT) build/psx-studio$(EXEEXT) build/tests$(EXEEXT) build/runtime-tests$(EXEEXT) build/camera-tests$(EXEEXT) $(OBJDIR)/camera-fixed.o build/fps-tests$(EXEEXT) build/render-cache-tests$(EXEEXT) build/timing-tests$(EXEEXT) build/game-loop-tests$(EXEEXT) build/frame-tests$(EXEEXT) build/checkpoint-tests$(EXEEXT)
+	./build/viewport-tests$(EXEEXT)
 	./build/input-tests$(EXEEXT)
 	./build/sound-tests$(EXEEXT)
 	./build/audio-tests$(EXEEXT)

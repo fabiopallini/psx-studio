@@ -187,11 +187,17 @@ See `AGENTS.md` for the project arithmetic rules.
 
 ## Scene plates and invisible collision volumes
 
-Scene backgrounds are configured in the editor/JSON, not positioned as meshes.
-The exporter sets `scene->background_texture` to a 1-based index for two native
-TIM tiles; zero means no plate. Leave it under exporter ownership in game modules.
-See [textures](textures.md#pre-rendered-scene-backgrounds) for dimensions, VRAM
-packing and fixed-camera authoring. A plate has no depth or collision information.
+Scene backgrounds and transparent depth layers are configured in the editor/JSON.
+The exporter sets `scene->background_texture` to a 1-based index for two base
+TIMs; zero means no base. It also fills `scene->backdrop_count` and the inline
+`scene->backdrops` tile array. Each tile has a local 0-based texture index, native
+screen rectangle and positive camera-space depth. Leave these exporter-owned
+fields unchanged in gameplay modules. They are copied with render snapshots and
+reset on every Scene load.
+
+See [textures](textures.md#transparent-depth-layers) for PNG alpha, ordering,
+VRAM packing and fixed-camera authoring. Depth layers can hide geometry but do
+not provide collision information; author physical blockers independently.
 
 Use `object->render_flags |= PSX_RENDER_HIDDEN` for a collision-only object.
 It remains alive and solid, participates in movement/hit logic and can be found
@@ -205,8 +211,10 @@ A module can enable `scene->hud.enabled` and set `health`, `max_health`, `ammo`
 and `message` in `scene->hud`. The standard game loop then draws an HP bar across
 the top overlay, ammunition, FPS and the message instead of the diagnostic scene
 summary. The bar clamps health and supports maximum health up to 32767. Keep
-message strings short (roughly 36 characters) and alive until replaced; static
-string literals are suitable. Zero-initialized/disabled HUDs preserve the existing
+message lines short (roughly 36 characters) and the source string alive until
+replaced; static string literals or module-owned buffers are suitable. Each
+render snapshot copies at most `PSX_HUD_MESSAGE_SIZE - 1` (511) bytes into its
+own `message_text` storage, so later menu edits cannot change a frame in flight. Zero-initialized/disabled HUDs preserve the existing
 overlay for older examples. Scene loads reset HUD state, so initialize it in your
 module's init callback. The editor does not execute gameplay modules or draw this
 runtime HUD in its preview. The optional Shadow Ops example demonstrates
@@ -231,11 +239,26 @@ very wide projected edges conservatively bypass this rejection.
 `scene->hud.style` defaults to 0 (existing diagnostic/game HUD).
 `PSX_HUD_HEALTH_ONLY` shows only the HP bar. `PSX_HUD_COMBAT` shows compact HP,
 a pistol icon with a cyan frame and tiny ammunition digits.
+`PSX_HUD_COMBAT_MESSAGE` adds the same opaque message balloon as menu style
+while retaining the HP bar and ammunition display; it uses independent GPU
+packets so the message cannot overwrite the combat primitives.
+`PSX_HUD_INVENTORY` draws a compact six-slot graphic panel (three columns, two
+rows) with its own small energy gauge and ammo-slot count. Set
+`scene->inventory.icons[0..5]` to 0 empty, 1 handgun, 2 ammo or 3 key, and
+`scene->inventory.selected` to the selected slot. `runtime/icons.h` defines the
+32x20 native pixel silhouettes and palette. The renderer uses GPU color runs and
+beveled slot frames, not font-drawn boxes; no texture slot or per-frame image
+upload is needed. The panel is `(48,40,224,184)` in the 320x256 framebuffer.
+Set `hud.message` for the header at font row 6, selected title at row 19,
+one-line description at row 22 and footer at row 25, leaving room between lines.
+Keep description/footer widths within the panel (about 25 characters). Icon IDs
+and selection are copied by value with every render snapshot. Modules own
+inventory contents, navigation and pausing.
 `PSX_HUD_MENU` hides the bar and
 prints `hud.message` as a multiline menu/prompt inside an opaque dark panel
 with a light border. The panel follows the visible text bounds in the 38×28
-font grid, keeping prompts readable over bright scenery. Keep menu strings static so
-render snapshots can safely reference them. Modules own menu input and pausing.
+font grid, keeping prompts readable over bright scenery. Keep text within the
+511-byte snapshot limit, 38 columns and 28 rows. Modules own menu input and pausing.
 Health-only and combat styles suppress diagnostic text and the FPS overlay;
 style 0 retains the standard text/status display.
 

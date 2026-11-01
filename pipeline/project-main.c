@@ -11,7 +11,7 @@ static void draw_status(const PsxScene *view,int loaded)
     if (psFontEnabled()) {
         if(view->hud.enabled && view->hud.style==PSX_HUD_COMBAT) return;
         if(view->hud.enabled && view->hud.style==PSX_HUD_HEALTH_ONLY) return;
-        if(view->hud.enabled && view->hud.style==PSX_HUD_MENU) {
+        if(view->hud.enabled && (view->hud.style==PSX_HUD_MENU || view->hud.style==PSX_HUD_COMBAT_MESSAGE || view->hud.style==PSX_HUD_INVENTORY)) {
             if(view->hud.message) FntPrint("%s",view->hud.message);
         } else if(view->hud.enabled) {
             fps=psFrameRate();
