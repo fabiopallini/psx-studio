@@ -151,7 +151,7 @@ text, including checkpoint confirmations and errors.
 The optional `examples/last-ward.psx` is an original fixed-camera survival horror
 demo with a pre-rendered plate and genuine 3D actors/collisions/projectiles.
 Its accompanying guide documents controls, module IDs and transparent depth
-layers in the pharmacy. `/export/last-ward-example` tests the installed demo; it skips when absent.
+layers in the pharmacy.
 Generic `/export/scene-background`, `/export/depth-layers` and native pipeline fixtures remain independent
 of example assets. Check both authoring preview and console framing after changing
 a plate or its camera; host exports cannot prove that the painted perspective

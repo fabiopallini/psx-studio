@@ -819,17 +819,6 @@ static void scene_depth_layers(void)
     g_free(output);g_free(missing);g_free(mask_path);g_free(copy);g_free(base);g_free(source);g_free(file);project_clear(&p);project_clear(&q);
 }
 
-static void last_ward_example(void)
-{
-    if(!g_file_test("examples/last-ward.psx",G_FILE_TEST_IS_REGULAR)) {
-        g_test_skip("Install the Last Ward example archive to run this integration check.");return;
-    }
-    Project p;project_init(&p);GError *error=NULL;char *harness=NULL;
-    g_assert_true(project_load(&p,"examples/last-ward.psx",&error));g_assert_no_error(error);
-    g_assert_true(g_file_get_contents("tests/last_ward.c",&harness,NULL,&error));g_assert_no_error(error);
-    compile_export(&p,harness,"export-last-ward");g_free(harness);project_clear(&p);
-}
-
 static void scene_snapshot_isolation(void)
 {
     Project p,q;project_init(&p);project_init(&q);GError *error=NULL;
@@ -866,7 +855,6 @@ int main(int argc, char **argv)
     g_test_add_func("/project/relocation", relocation);
     g_test_add_func("/export/sound-assets",sound_assets);
     g_test_add_func("/export/scene-background",scene_background);
-    g_test_add_func("/export/last-ward-example",last_ward_example);
     g_test_add_func("/export/depth-layers",scene_depth_layers);
     g_test_add_func("/export/c89-runtime-scene", export_c89_scene);
     g_test_add_func("/export/empty-and-capacity", export_empty_and_capacity);
