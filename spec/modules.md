@@ -183,7 +183,7 @@ or missing runtime target leaves the camera at its last position.
 
 PS1 modules must use integer or fixed-point arithmetic. The console has no FPU;
 do not use float/double or floating-point math calls in gameplay callbacks.
-See `AGENTS.md` for the project arithmetic rules.
+See `spec.md` for the project arithmetic rules.
 
 ## Scene plates and invisible collision volumes
 

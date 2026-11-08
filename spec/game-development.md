@@ -2,7 +2,7 @@
 
 Read this when continuing `examples/shadow-ops.psx` or creating another game.
 This is an operational guide, not a second engine specification. Read
-[AGENTS.md](../AGENTS.md) first; inspect the current implementation when a detail
+[spec.md](../spec.md) first; inspect the current implementation when a detail
 changes. Keep this guide updated when changing the format, workflow or game contract.
 
 Example games are distributed separately through GitHub Releases. Extract the
@@ -203,7 +203,7 @@ machine-specific path into source. CLI overrides do not rewrite project settings
 The build command starts DOSBox and needs a display. Large campaigns can take
 several minutes to compile with Psy-Q; the native pipeline allows up to ten
 minutes for DOSBox before terminating a stalled build. For automated execution,
-run it with the isolated-display rules in AGENTS.md. Output defaults to
+run it with the isolated-display rules in spec.md. Output defaults to
 `build/ps1/PROJECT/`, using the sanitized `.psx` stem. Editor builds always use
 this location and expose no output setting. CLI `--output-root` and legacy custom
 `output_path` retain NAME-HASH subfolders; an existing fixed folder owned by a
@@ -252,7 +252,7 @@ actual gameplay step before repositioning the survivor into a portal: the new
 Scene ID can appear in RAM while loading is still blocking and entry triggers
 have not armed yet. Stop owned GUI/Xvfb processes afterward. Do not open the user's desktop
 or file manager for automated checks. For DOSBox Staging also use the temporary
-software-texture configuration described in AGENTS.md and disable primary/local
+software-texture configuration described in spec.md and disable primary/local
 configuration loading; Xvfb alone is insufficient.
 
 FPS measures displayed images, not simulation updates. The shared engine services

@@ -136,12 +136,12 @@ for the example commands and integration tests in the development guides.
 
 ## Documentation and development
 
-The README covers the basics. More detailed guides live in `docs/`:
+The README covers the basics. More detailed guides live in `spec/`:
 
-- [Game development](docs/game-development.md): projects, Scenes, development workflow and verification.
-- [C89 modules](docs/modules.md): custom gameplay and runtime APIs.
-- [Audio](docs/audio.md) and [textures](docs/textures.md): supported formats and conversion.
-- [Architecture](docs/architecture.md): how the editor, exporter and runtime fit together.
+- [Game development](spec/game-development.md): projects, Scenes, development workflow and verification.
+- [C89 modules](spec/modules.md): custom gameplay and runtime APIs.
+- [Audio](spec/audio.md) and [textures](spec/textures.md): supported formats and conversion.
+- [Architecture](spec/architecture.md): how the editor, exporter and runtime fit together.
 
 `editor/` contains the desktop application, `runtime/` the shared game code and
 `pipeline/` the PS1 build resources. Keep models low poly and check performance

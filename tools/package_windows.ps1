@@ -83,8 +83,8 @@ Get-ChildItem -LiteralPath $locale -Filter '*.mo' -File -Recurse | Where-Object 
     [IO.Directory]::CreateDirectory((Split-Path $destination -Parent)) | Out-Null
     Copy-Item -LiteralPath $_.FullName -Destination $destination
 }
-foreach ($relative in @('pipeline', 'runtime', 'docs')) { Copy-Tree (Join-Path $root $relative) (Join-Path $stage $relative) }
-Copy-Item -LiteralPath (Join-Path $root 'README.md') -Destination (Join-Path $stage 'README.md')
+foreach ($relative in @('pipeline', 'runtime', 'spec')) { Copy-Tree (Join-Path $root $relative) (Join-Path $stage $relative) }
+foreach ($relative in @('README.md', 'spec.md')) { Copy-Item -LiteralPath (Join-Path $root $relative) -Destination (Join-Path $stage $relative) }
 # Only clean generated package content, after resolving and checking both paths.
 Get-ChildItem -LiteralPath $stage -Filter '*.a' -Recurse -File | Remove-Item -Force
 $text = @"

@@ -20,7 +20,7 @@ modules; the engine does not depend on Shadow Ops or another example.
 | `pipeline/cdrom/` | CD image tools and boot resources |
 | `tools/` | Windows packaging and optional development asset generators |
 | `tests/` | Host checks for editor/export, runtime and build pipeline |
-| `docs/` | Development workflow and technical reference guides |
+| `spec/` | Development workflow and technical reference guides |
 | `examples/` | Optional projects installed from a separate release archive |
 | `build/` | Generated binaries, logs and game images; ignored by Git |
 
