@@ -26,7 +26,7 @@ void project_init(Project *p)
     p->name = g_strdup("New project");
     p->psyq_path = g_strdup("");
     p->emulator_command=g_strdup("pcsxr -cdfile {cue}");
-    p->dosbox = g_strdup(""); p->output_path = g_strdup("");p->background=g_strdup("");
+    p->output_path = g_strdup("");p->background=g_strdup("");
     p->view[0] = .55 * 180 / G_PI; p->view[1] = .6 * 180 / G_PI; p->view[2] = .9;
     p->objects = g_ptr_array_new_with_free_func(object_free);
     p->background_layers=g_ptr_array_new_with_free_func(background_layer_free);
@@ -40,7 +40,7 @@ void project_init(Project *p)
 
 void project_clear(Project *p)
 {
-    g_free(p->name); g_free(p->path); g_free(p->psyq_path); g_free(p->asset_root); g_free(p->dosbox); g_free(p->output_path); g_free(p->emulator_command);g_free(p->background);
+    g_free(p->name); g_free(p->path); g_free(p->psyq_path); g_free(p->asset_root); g_free(p->output_path); g_free(p->emulator_command);g_free(p->background);
     g_clear_pointer(&p->objects, g_ptr_array_unref);
     g_clear_pointer(&p->background_layers,g_ptr_array_unref);
     g_clear_pointer(&p->scenes,g_ptr_array_unref);
@@ -281,7 +281,7 @@ JsonNode *project_scene_to_json(const Project *p)
     json_builder_end_array(b);
     string_member(b,"projection",p->projection?"perspective":"orthographic");
     string_member(b,"emulator_command",p->emulator_command);
-    string_member(b, "dosbox", p->dosbox); string_member(b, "output_path", p->output_path);
+    string_member(b, "output_path", p->output_path);
     json_builder_set_member_name(b,"active_camera");json_builder_add_int_value(b,p->active_camera);
     json_builder_set_member_name(b,"show_game_frame");json_builder_add_boolean_value(b,p->show_game_frame);
     json_builder_set_member_name(b,"drag_axis");json_builder_add_int_value(b,p->drag_axis);
@@ -420,10 +420,6 @@ gboolean project_scene_decode(Project *p, JsonNode *root, GError **error)
         p->projection=g_str_equal(mode,"perspective");
     }
     if (json_object_has_member(doc, "view") && !vector_read(doc, "view", p->view)) return fail(error, "Invalid camera view.");
-    if (json_object_has_member(doc, "dosbox")) {
-        if (!typed(doc, "dosbox", G_TYPE_STRING)) return fail(error, "Invalid tool settings.");
-        g_free(p->dosbox); p->dosbox = g_strdup(json_object_get_string_member(doc, "dosbox"));
-    }
     if(json_object_has_member(doc,"emulator_command")) {
         if(!typed(doc,"emulator_command",G_TYPE_STRING)) return fail(error,"Invalid emulator command.");
         g_free(p->emulator_command);p->emulator_command=g_strdup(json_object_get_string_member(doc,"emulator_command"));
@@ -549,7 +545,8 @@ static gboolean build_files_exist(const char *directory)
 
 static gboolean build_matches_project(const char *directory,const Project *p)
 {
-    char *marker=g_build_filename(directory,".psx-studio-build",NULL),*project=NULL;
+    char *marker=g_build_filename(directory,".studio-project",NULL),*project=NULL;
+    if(!g_file_test(marker,G_FILE_TEST_IS_REGULAR)) {g_free(marker);marker=g_build_filename(directory,".psx-studio-build",NULL);}
     gboolean same=FALSE;
     if(g_file_get_contents(marker,&project,NULL,NULL)) {
         GStatBuf a,b;
@@ -558,6 +555,22 @@ static gboolean build_matches_project(const char *directory,const Project *p)
     }
     g_free(marker);g_free(project);
     return same && build_files_exist(directory);
+}
+
+char *project_build_name(const Project *p)
+{
+    char *stem=g_path_get_basename(p->path),*extension=strrchr(stem,'.');
+    if(extension && extension!=stem) *extension=0;
+    for(char *c=stem;*c;c++) if(!g_ascii_isalnum(*c) && *c!='_' && *c!='-') *c='_';
+    char *short_name=g_strndup(stem,21),*hash=g_compute_checksum_for_string(G_CHECKSUM_SHA256,p->path,-1);
+    char *name=g_strdup_printf("%s-%.10s",*short_name?short_name:"game",hash);
+    g_free(stem);g_free(short_name);g_free(hash);return name;
+}
+
+char *project_engine_output(const Project *p,const char *root)
+{
+    char *name=project_build_name(p),*path=g_build_filename(root,"build","engine","ps1",name,NULL);
+    g_free(name);return path;
 }
 
 char *project_build_output(const Project *p, const char *root)
@@ -569,6 +582,9 @@ char *project_build_output(const Project *p, const char *root)
         if(directory && build_files_exist(directory)) return directory;
         g_free(directory);return NULL;
     }
+    char *engine_output=project_engine_output(p,root);
+    if(build_matches_project(engine_output,p)) return engine_output;
+    g_free(engine_output);
     char *parent=g_path_get_dirname(p->path);
     char *base=*p->output_path?g_canonicalize_filename(p->output_path,parent):g_build_filename(root,"build","ps1",NULL);
     g_free(parent);

@@ -1,159 +1,108 @@
 # Architecture
 
-PSX Studio has three main parts: the desktop editor, a native export/build
-pipeline, and the PlayStation runtime. Games supply their own assets and C89
-modules; the engine does not depend on Shadow Ops or another example.
-
-## Source layout
+PSX Studio is a desktop authoring tool and a C89 application exporter. PSX Lib
+is an included, independently buildable framework in `psx-lib/`. Studio never sends `.psx` documents to the engine and
+does not ship a second console runtime, SDK backend or DOSBox launcher.
 
 | Path | Responsibility |
 | --- | --- |
-| `editor/main.c` | GTK4 UI, project actions and asynchronous build launch |
-| `editor/project.c`, `editor/scenes.c` | Project validation, persistence and Scene snapshots |
+| `editor/main.c` | GTK4 UI, project actions, settings and asynchronous build launch |
+| `editor/project.c`, `editor/scenes.c` | Project persistence, validation and Scene snapshots |
 | `editor/assets.c`, `editor/audio.c` | Native OBJ/PNG import, TIM and WAV-to-VAG conversion |
-| `editor/viewport.c` | OpenGL/GLES editor preview and object manipulation |
-| `editor/export.c` | Project-to-C89 export, geometry, textures and module dependencies |
-| `editor/build.c` | Native build preparation, locking, DOSBox launch and output verification |
-| `runtime/` | Portable C89 objects, movement, collisions, camera and timing helpers |
-| `pipeline/project-main.c` | Shared exported game loop |
-| `pipeline/template/src/` | Psy-Q rendering, input, sound and memory-card backends |
-| `pipeline/cdrom/` | CD image tools and boot resources |
-| `tools/` | Windows packaging and optional development asset generators |
-| `tests/` | Host checks for editor/export, runtime and build pipeline |
-| `spec/` | Development workflow and technical reference guides |
-| `examples/` | Optional projects installed from a separate release archive |
-| `build/` | Generated binaries, logs and game images; ignored by Git |
+| `editor/viewport.c`, `editor/camera.c` | Desktop preview, picking and manipulation |
+| `editor/export.c` | `.psx` to C89 object/scene/collision tables, modules and TIM assets |
+| `editor/game-main.h` | Embedded application entry point using engine public APIs |
+| `editor/build.c` | Generated-source ownership/locking and included framework invocation |
+| `tests/` | Editor, export and engine-boundary checks |
+| `tools/` | Windows packaging and optional developer asset generators |
 
-The desktop application is C11. Console code and exported modules are strict
-ANSI C89. Python is used only by optional asset generators and developer tests.
-The Psy-Q SDK, DOSBox, emulator and BIOS are external dependencies.
+The editor is C11 with GTK4, JSON-GLib, Epoxy and libpng. Generated game code and
+modules are strict ANSI C89. Python is only an optional developer-test/asset-tool
+dependency. `make studio` compiles the editor independently; game builds need the included
+framework executable built by `make lib` or the default `make`.
 
-## Projects and Scenes
+## Authoring and application generation
 
-JSON format version 3 stores Scenes with stable IDs. Each Scene contains its
-objects, camera and view settings. The root retains a compatibility mirror of
-the editor's active Scene; Scene entries are authoritative when loading.
-Versions 1 and 2 load as single-Scene projects.
+JSON format version 3 stores Scenes with stable IDs. Each Scene contains objects,
+cameras, collision settings and background/depth layers. The root mirrors the
+active Scene for compatibility; versions 1/2 load as single-Scene projects.
 
-`editor/scenes.c` snapshots the active Scene before switching. Undo uses deep
-JSON copies and records selection as well as project state. Saves are atomic;
-Save As copies the accompanying asset folder. References are relative to
-`PROJECT_psx_data/`, so the project and folder must travel together.
+Scene snapshots and undo use deep JSON copies. Saves are atomic; Save As copies
+the accompanying `PROJECT_psx_data/` folder. Keep the project and data together.
+Project settings include `psyq_path` and `emulator_command`. Studio always
+locates its included PSX Lib without a framework setting. Old `engine_path`
+and `dosbox` settings are ignored and omitted on save. DOSBox-X comes from PATH.
 
-Export writes C89 Scene defaults, mesh tables, renamed modules and sound banks.
-Identical immutable geometry and ADPCM bytes can be shared across Scenes;
-live objects and audio-bank metadata remain separate. Shared ADPCM arrays are
-compiled in separate generated `Mnnn.C` files, listed alongside logic wrappers
-in the export manifest. This keeps the legacy Psy-Q assembler from processing
-all samples together with the combined Scene tables. All geometry and module
-code are resident in the executable. The export manifest records the largest
-Scene object count; native builds size renderer object caches, collider lines
-and snapshot storage to that count. The 512 ordering buckets remain independent
-so this memory saving does not reduce depth-sorting precision. Scene textures are loaded from CD and reuse
-VRAM slots. Runtime transitions clean up the previous Scene, reset live object
-storage, initialize the destination and reload its resources.
+The exporter creates a complete application: `main.c`, `scene.c`, `scene.h`,
+`sNNN.h` Scene tables, `lNNN.h` module bodies, `mNNN.c` independently compiled
+logic wrappers, `reslist.h`, snapshotted `resources/` and `assets.json`. Lowercase DOS 8.3 C/include names work
+with engine source normalization on case-sensitive hosts. Include-only Scene
+and module bodies are headers so the engine does not compile them twice.
 
-Each Scene may reference a pre-rendered PNG plate through `background`, plus
-ordered transparent `background_layers` with camera-space depth. Host decoding
-samples them to 320×256. The base exports two opaque TIMs at fixed VRAM positions;
-depth layers retain binary alpha and export cropped/split TIM rectangles. Native
-page packing shares the remaining texture memory while protecting framebuffers,
-font memory and UV page boundaries. More than six exported TIM tiles are valid;
-the six-reference limit applies to ordinary object textures.
+The exporter maps each Scene to an engine resource bank, independently of its
+Scene ID. It emits C89 object defaults/collisions/cameras and binds meshes through
+`psx_resource_mesh`, then applies resource metadata with `psx_resource_apply`.
+The engine converts assets through its `--resources` C-list contract, shares
+immutable geometry/sample arrays and packages textures in `ASSETS/Bnnn/`.
 
-The runtime's 1-based `background_texture` selects the base pair; zero retains
-legacy behavior. `backdrop_count/backdrops` hold up to eight exporter-owned layer
-tiles (four source PNGs), with screen rectangles and positive camera depth. The
-base draws at the far ordering bucket; layers use the same depth bins as normal
-triangles, so geometry can pass in front of or behind them. HUD stays in front.
-All image transfers occur at Scene load. The viewport previews alpha/depth with
-OpenGL, while the PS1 retains its ordinary approximate triangle ordering.
+Immutable geometry and sample bytes can be shared across Scenes; writable
+object arrays, bank metadata and application state remain separate. Scene changes
+clear old objects, restore exported defaults, initialize modules and load resources
+at GPU-idle boundaries. The largest Scene determines `--max-objects`. Generated
+main uses `psUpdate`, `psBeginFrame`, `psDrawScene`, `psDrawOverlay` and `psDisplay`.
+Gameplay modules use the included framework's `object.h` and other public APIs.
 
-## Native build pipeline
+Exports record owned filenames in `.studio-export`. A later export prunes obsolete
+owned files so removed modules cannot remain in direct-C builds. Export into an
+empty folder initially; Studio does not overwrite an arbitrary source tree.
 
-The UI starts the same executable with `--build-ps1` through GSubprocess,
-keeping GTK responsive. `build.sh` is a convenience wrapper for this command.
-The native pipeline snapshots the project/assets, exports sources and TIM files,
-runs Psy-Q through DOSBox, and verifies the executable and CD contents.
-Project source lists use a DOS 8.3 `sources.rsp` CCPSX control file so multiple
-Scene modules do not exceed DOS's 126-byte command-tail limit.
-It mounts the SDK read-only and invalidates previous final artifacts before export.
-Exported texture paths use `ASSETS/Snnn/Tnnn.TIM`, grouping by Scene index so each
-ISO directory fits one sector. Native SDK lookup was observed to fail for an
-asset placed in a second directory sector; grouping avoids that failure as games
-add Scenes and layers. The manifest's optional `directory` member records this
-layout. Build preparation writes the matching CD hierarchy and verification
-compares every nested file byte-for-byte. Older flat texture manifests remain
-verifiable.
+## Build boundary
 
-UI output is `build/ps1/PROJECT/`. CLI output-root overrides and legacy custom
-settings use isolated `NAME-HASH/` subfolders. Native Windows locks or Linux
-`flock` prevent simultaneous builds in the same folder. Ownership markers prevent
-one project from overwriting another project's output.
+The UI launches the same executable with `--build-ps1` using GSubprocess. `build.sh`
+is a convenience dispatcher. Studio resolves the included executable under
+`psx-lib/build/` in a checkout or `psx-lib.exe` beside the packaged Windows editor.
+An explicit CLI `--engine` override is retained for development and tests only.
+The UI never asks for a framework path or searches a sibling checkout/PATH.
 
-Settings stores SDK, DOSBox and emulator configuration. Build metadata records
-the effective SDK without persisting CLI overrides into the project. Output
-commands require a successful build with valid markers and CD files.
+The root Makefile delegates framework build/test/clean to `psx-lib/Makefile`.
+The latter works independently without GTK or editor sources. The source tree
+has one root `AGENTS.md` and `spec.md`; framework contracts are in
+[framework reference](framework.md). No nested instruction file is needed.
 
-Windows packaging includes GTK resources, DLL dependencies and explicit ANGLE
-EGL/GLES libraries. It checks shader rendering and executable loading with MSYS2
-removed from PATH. The Windows editor links with the GUI subsystem to avoid
-an extra console window; captured CLI/build output is preserved. The GDBus
-session helper ships beside GIO so session-bus autolaunch can find it.
-Examples are packaged separately.
+Studio exports into `build/studio-projects/NAME-HASH/source/`. Names include a
+hash of the canonical project path so equal basenames remain isolated. A native
+Windows/Linux lock protects each source workspace, and an ownership marker
+prevents overwriting another project. Failed export invalidates an existing
+engine build's success receipt. Generated sources are regenerated completely;
+the engine keeps its own incremental object cache outside them.
 
-## Editor and game cameras
+Studio invokes `psx-lib --build-ps1 --source-root ... --name ...
+--build-directory ... --psyq ... --max-objects ... --render-triangles 8192
+--resources .../reslist.h --asset-root .../resources`.
+The engine owns runtime/backend injection, SDK validation, compilation, DOSBox-X,
+cache receipts, output locks and EXE/CD verification. Its installed resources
+must match its executable. `--prepare-only` is forwarded without starting DOSBox.
+`--verify` delegates to the included framework, without a Studio ISO verifier.
 
-The editor uses a look-at orbit view with perspective/orthographic and axis
-presets. Camera objects store eye position, pitch/yaw, zoom, projection and an
-optional follow target. View through camera and Capture editor view explicitly
-copy framing between them; ordinary editor navigation does not move a game camera.
-Projects without an active camera use the legacy Scene view.
+Output defaults to `build/engine/ps1/NAME-HASH/`, isolated from legacy Studio
+builds. Successful builds gain a `.studio-project` receipt for UI output discovery;
+engine ownership markers continue to identify the generated C source directory.
+CLI `--output-root` and legacy custom output settings retain engine hashed folders.
+Legacy playable builds can still be discovered. The SDK can be recovered from
+engine `build-info.json`; CLI overrides never rewrite saved project settings.
 
-The preview and exporter share UV endpoint rounding and RGB555 texture conversion.
-OpenGL uses affine texture interpolation, but desktop depth precision, clipping
-and module-free preview behavior differ from the PS1. It is not a GPU emulator.
+## Desktop preview and packaging
 
-## Simulation and rendering
+The viewport uses desktop-only floating-point camera helpers. It previews affine
+texture interpolation, backgrounds and depth layers, but does not execute C
+modules or emulate PS1 ordering, clipping, animation or gameplay.
 
-Gameplay runs at 50 fixed PAL steps per second. `psUpdate()` services the integer
-clock and fresh pad input in the main thread, including between rendering batches.
-Catch-up is bounded after exceptional stalls. Blocking Scene/card loads reset
-timing and wait for neutral input. Callbacks never execute in interrupts.
+Windows packaging includes GTK resources, DLL dependencies, ANGLE, GDBus and
+`psx-lib.exe`, plus framework `runtime/` and `pipeline/` resources under `psx-lib/`.
+DLL dependencies are collected for both executables. Settings contains SDK and
+emulator configuration only; DOSBox-X must be in PATH. Windows execution
+requires its own validation session.
 
-Rendering uses a frozen object/camera/HUD snapshot. HUD message text is copied
-into frame-owned storage (511 bytes plus terminator), allowing gameplay modules
-to update inventory/dialog buffers while an older frame is being rendered. Two
-packet buffers allow CPU preparation to overlap GPU work; `runtime/frame.h` tracks ownership. GPU polling
-is nonblocking during gameplay. The VBlank callback presents completed images;
-rendered FPS and simulation updates are independent. Long individual callbacks
-can still delay cooperative scheduling.
-
-Transforms, projection and clipping use integer/fixed-point math. Q12 scales and
-zoom use 4096 for 1.0; rotations use 4096 units per turn. Console camera builds
-exclude desktop floating-point helpers. Shared-position and local-geometry caches
-reduce repeated work; GTE transforms have an integer fallback for wide coordinates.
-Meshes must stay immutable while snapshots/caches reference them. On pose swaps,
-the renderer relocates the shared-position map from another scene object using
-that immutable mesh (including hidden animation references), falling back to
-hashing for unknown module meshes. Camera trigonometry is reused until the
-snapshot angles change; object trigonometry is calculated once per draw. Render
-yields remain between objects, every 16 unique projected positions and every 16
-triangles, preserving fixed-step input service during expensive frames.
-For meshes with at least 32 triangles, a cached local L1 radius supplies a
-conservative view-space bound before vertex transformation. Scale uses the
-largest absolute Q12 component; a 16-unit plus 1/64-radius allowance covers
-rotation/truncation error. Near-plane intersections and oversized coordinates or
-zoom fall back to the full path. Rejected objects keep their projection cache
-invalid so re-entry cannot reuse uncomputed geometry.
-
-Ordering-table flags explicitly handle flat backdrop ground, translucent decals,
-backface rejection and emissive effects. Ordinary geometry retains depth sorting;
-there is no general depth buffer. See [module APIs](modules.md) for flag contracts,
-[audio](audio.md) and [textures](textures.md) for formats, and
-[game development](game-development.md#commands-and-verification) for validation
-procedures and known limitations.
-
-The application version is `STUDIO_APP_VERSION` in `editor/studio.h`; the title
-shows it beside the application name. `STUDIO_VERSION` independently identifies
-the JSON project format. Do not change the data format merely to release the editor.
+The application version is `STUDIO_APP_VERSION`; JSON `STUDIO_VERSION` remains
+independent. See [modules](modules.md) for application APIs and
+[game development](game-development.md) for verification and limitations.

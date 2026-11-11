@@ -65,6 +65,10 @@ if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -F
 [IO.File]::WriteAllText((Join-Path $stage $marker), "PSX Studio Windows distribution`n")
 Write-Host 'Packaging Windows editor, DLLs and GTK resources (no Python)...'
 Copy-Binary (Join-Path $root 'build\psx-studio.exe')
+Copy-Binary (Join-Path $root 'psx-lib\build\psx-lib.exe')
+foreach ($relative in @('runtime', 'pipeline')) {
+    Copy-Tree (Join-Path $root ('psx-lib\' + $relative)) (Join-Path $stage ('psx-lib\' + $relative))
+}
 # GIO autolaunches this helper from beside libgio; it is not an imported DLL.
 Copy-Binary (Join-Path $Prefix 'bin\gdbus.exe')
 # EGL and GLES are loaded dynamically by GTK/Epoxy, outside the EXE import table.
@@ -83,15 +87,16 @@ Get-ChildItem -LiteralPath $locale -Filter '*.mo' -File -Recurse | Where-Object 
     [IO.Directory]::CreateDirectory((Split-Path $destination -Parent)) | Out-Null
     Copy-Item -LiteralPath $_.FullName -Destination $destination
 }
-foreach ($relative in @('pipeline', 'runtime', 'spec')) { Copy-Tree (Join-Path $root $relative) (Join-Path $stage $relative) }
+foreach ($relative in @('spec')) { Copy-Tree (Join-Path $root $relative) (Join-Path $stage $relative) }
 foreach ($relative in @('README.md', 'spec.md')) { Copy-Item -LiteralPath (Join-Path $root $relative) -Destination (Join-Path $stage $relative) }
 # Only clean generated package content, after resolving and checking both paths.
 Get-ChildItem -LiteralPath $stage -Filter '*.a' -Recurse -File | Remove-Item -Force
 $text = @"
 Run psx-studio.exe directly. Keep every file and folder together.
 MSYS2 and Python are not required on the recipient's computer.
-Building PS1 games requires your own Psy-Q SDK and DOSBox/DOSBox-X.
-Configure their Windows paths in the editor settings.
+PSX Lib is included and detected automatically.
+Building PS1 games requires an external Psy-Q SDK and dosbox-x in PATH.
+Configure the SDK and emulator in Settings.
 Third-party library notices are in share/licenses.
 "@
 [IO.File]::WriteAllText((Join-Path $stage 'START-HERE.txt'), $text)
@@ -114,6 +119,10 @@ try {
     if ($LASTEXITCODE -ne 0 -or $help -notmatch '--export') { throw 'Packaged EXE load or captured CLI output check failed.' }
     $help = & (Join-Path $stage 'psx-studio.exe') --build-ps1 --help | Out-String
     if ($LASTEXITCODE -ne 0 -or $help -notmatch '--prepare-only') { throw 'Native build captured output check failed.' }
+    $help = & (Join-Path $stage 'psx-lib.exe') --help | Out-String
+    if ($LASTEXITCODE -ne 0 -or $help -notmatch '--resources') { throw 'Packaged PSX Lib load check failed.' }
+    $help = & (Join-Path $stage 'psx-lib.exe') --build-ps1 --help | Out-String
+    if ($LASTEXITCODE -ne 0 -or $help -notmatch '--source-root') { throw 'Packaged PSX Lib build interface check failed.' }
     & (Join-Path $stage 'gdbus.exe') help | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Packaged GDBus helper failed its load check: $LASTEXITCODE" }
 } finally { $env:PATH = $previousPath }

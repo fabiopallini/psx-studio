@@ -10,6 +10,11 @@ fi
 for tool in gcc make pkg-config; do
     command -v "$tool" >/dev/null || { echo "Missing $tool. Install the MSYS2 dependencies listed in README.md." >&2; exit 1; }
 done
+# Headless framework targets do not require GTK/ANGLE or the editor.
+case "$PSX_STUDIO_TARGET" in
+    lib) exec make -C psx-lib CC=gcc ;;
+    test-lib) exec make -C psx-lib CC=gcc PYTHON=python test ;;
+esac
 pkg-config --atleast-version=4.12 gtk4
 pkg-config --exists gtk4 json-glib-1.0 epoxy libpng
 if [ "$PSX_STUDIO_TARGET" = build ] || [ "$PSX_STUDIO_TARGET" = run ]; then
@@ -19,6 +24,8 @@ case "$PSX_STUDIO_TARGET" in
     build) make CC=gcc windows-package ;;
     run) make CC=gcc windows-package; ./build/windows/psx-studio/psx-studio.exe ;;
     test) make CC=gcc PYTHON=python test ;;
+    test-studio) make CC=gcc PYTHON=python test-studio ;;
+    studio) make CC=gcc studio ;;
     *) echo 'Unknown build target.' >&2; exit 1 ;;
 esac
 if [ -n "${PSX_STUDIO_PROJECT:-}" ]; then

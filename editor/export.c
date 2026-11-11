@@ -1,4 +1,5 @@
 #include "studio.h"
+#include "game-main.h"
 #include <math.h>
 #include <string.h>
 #include <glib/gstdio.h>
@@ -21,7 +22,9 @@ static int find_texture(GPtrArray *textures, const char *path)
 static gboolean write_file(const char *dir,const char *name,const char *data,GError **error)
 {
     char *path=g_build_filename(dir,name,NULL);
-    gboolean ok=g_file_set_contents_full(path,data,-1,G_FILE_SET_CONTENTS_CONSISTENT,0644,error);
+    gboolean ok=!g_file_test(path,G_FILE_TEST_IS_SYMLINK);
+    if(!ok) bad(error,"Generated files cannot be symbolic links.");
+    if(ok) ok=g_file_set_contents_full(path,data,-1,G_FILE_SET_CONTENTS_CONSISTENT,0644,error);
     g_free(path); return ok;
 }
 
@@ -364,6 +367,38 @@ static void separate_samples(GString *code,GPtrArray *samples)
     g_string_free(result,TRUE);g_match_info_free(match);g_regex_unref(regex);
 }
 
+/* Export folders are generated projects. Track the exact files owned by the
+ * exporter so removing a module/Scene cannot leave a compilable stale unit. */
+static gboolean prepare_destination(const char *directory,const char *stage,GError **error)
+{
+    if(g_file_test(directory,G_FILE_TEST_IS_SYMLINK)) return bad(error,"Export directory cannot be a symbolic link.");
+    char *marker=g_build_filename(directory,".studio-export",NULL);
+    if(g_file_test(marker,G_FILE_TEST_IS_SYMLINK)) {g_free(marker);return bad(error,"Export ownership marker cannot be a symbolic link.");}
+    gboolean owned=g_file_test(marker,G_FILE_TEST_IS_REGULAR),ok=TRUE;
+    GDir *dir=g_dir_open(directory,0,NULL);
+    if(dir && !owned && g_dir_read_name(dir)) ok=bad(error,"Choose an empty export directory or an existing Studio export.");
+    if(dir) g_dir_close(dir);
+    if(ok && owned) {
+        char *text=NULL;ok=g_file_get_contents(marker,&text,NULL,error);
+        if(ok) {
+            char **names=g_strsplit(text,"\n",-1);
+            for(guint i=0;ok && names[i];i++) if(*names[i]) {
+                if(!g_regex_match_simple("^[A-Za-z0-9_]+[.](c|h|C|H|TIM|json)$",names[i],0,0)) {
+                    ok=bad(error,"Invalid Studio export ownership list.");break;
+                }
+                char *next=g_build_filename(stage,names[i],NULL),*old=g_build_filename(directory,names[i],NULL);
+                if(g_file_test(old,G_FILE_TEST_IS_SYMLINK)) ok=bad(error,"Generated export files cannot be symbolic links.");
+                if(ok && !g_file_test(next,G_FILE_TEST_EXISTS) && g_file_test(old,G_FILE_TEST_EXISTS) && g_unlink(old)!=0)
+                    ok=bad(error,"Cannot remove obsolete generated source.");
+                g_free(next);g_free(old);
+            }
+            g_strfreev(names);
+        }
+        g_free(text);
+    }
+    g_free(marker);return ok;
+}
+
 gboolean project_export(const Project *p,const char *directory,GError **error)
 {
     if(!project_validate(p,error)) return FALSE;
@@ -388,8 +423,6 @@ gboolean project_export(const Project *p,const char *directory,GError **error)
             JsonObject *manifest=json_node_get_object(json_parser_get_root(parser));
             JsonArray *ts=json_object_get_array_member(manifest,"textures"),*ms=json_object_get_array_member(manifest,"modules");
             GString *rewritten=g_string_new(code);
-            char *disc_prefix=g_strdup_printf("ASSETS\\\\S%03u\\\\",n);
-            g_string_replace(rewritten,"ASSETS\\\\",disc_prefix,0);g_free(disc_prefix);
             GHashTable *aliases=g_hash_table_new_full(g_str_hash,g_str_equal,g_free,g_free);
             share_arrays(rewritten,shared,aliases,n,&total_triangles);
             separate_samples(rewritten,samples);
@@ -409,7 +442,7 @@ gboolean project_export(const Project *p,const char *directory,GError **error)
                 char *bytes=NULL;gsize length=0;char *from=g_build_filename(sub,old,NULL),*to=g_build_filename(stage,new,NULL);
                 ok=g_file_get_contents(from,&bytes,&length,error) && g_file_set_contents(to,bytes,length,error);
                 g_free(bytes);g_free(from);g_free(to);
-                JsonNode *copy=json_node_copy(json_array_get_element(ts,k));json_object_set_string_member(json_node_get_object(copy),"file",new);char *disc_dir=g_strdup_printf("S%03u",n);json_object_set_string_member(json_node_get_object(copy),"directory",disc_dir);g_free(disc_dir);
+                JsonNode *copy=json_node_copy(json_array_get_element(ts,k));json_object_set_string_member(json_node_get_object(copy),"file",new);
                 json_array_add_element(textures,copy);texture_id++;
                 g_free(old);g_free(new);g_free(placeholder);
             }
@@ -423,15 +456,15 @@ gboolean project_export(const Project *p,const char *directory,GError **error)
             }
             for(guint k=0;k<json_array_get_length(ms) && ok;k++) {
                 g_string_append_printf(includes,"#define studio_logic_%u level_%u_logic_%u\n",k,n,k);
-                char *old=g_strdup_printf("L%03u.C",k),*contents=read_stage(sub,old,error),*name=g_strdup_printf("L%03u.C",module_id);
+                char *old=g_strdup_printf("L%03u.C",k),*contents=read_stage(sub,old,error),*name=g_strdup_printf("L%03u.H",module_id);
                 if(contents) ok=write_file(stage,name,contents,error);else ok=FALSE;
                 g_free(old);g_free(contents);g_free(name);
                 name=g_strdup_printf("M%03u.C",module_id);
-                char *wrapper=g_strdup_printf("#define psx_logic level_%u_logic_%u\n#include \"L%03u.C\"\n",n,k,module_id);
+                char *wrapper=g_strdup_printf("#define psx_logic level_%u_logic_%u\n#include \"L%03u.H\"\n",n,k,module_id);
                 if(ok) ok=write_file(stage,name,wrapper,error);
                 json_array_add_string_element(modules,name);g_free(name);g_free(wrapper);module_id++;
             }
-            char *name=g_strdup_printf("S%03u.C",n);
+            char *name=g_strdup_printf("S%03u.H",n);
             if(ok) ok=write_file(stage,name,rewritten->str,error);
             g_string_append_printf(includes,"#include \"%s\"\n#undef scene\n#undef object_defaults\n#undef studio_scene_name\n#undef studio_textures\n#undef studio_texture_count\n#undef studio_scene_load\n",name);g_free(name);
             for(guint k=0;k<view.objects->len;k++) g_string_append_printf(includes,"#undef vertices_%u\n#undef mesh_%u\n",k,k);
@@ -462,22 +495,228 @@ gboolean project_export(const Project *p,const char *directory,GError **error)
         JsonObject *manifest=json_object_new();json_object_set_array_member(manifest,"textures",json_array_ref(textures));json_object_set_array_member(manifest,"modules",json_array_ref(modules));
         json_object_set_int_member(manifest,"triangles",total_triangles);
         json_object_set_int_member(manifest,"max_objects",max_objects);
+        for(guint i=0;i<json_array_get_length(modules);i++) {
+            char *lower=g_ascii_strdown(json_array_get_string_element(modules,i),-1);
+            json_node_set_string(json_array_get_element(modules,i),lower);g_free(lower);
+        }
         JsonNode *node=json_node_new(JSON_NODE_OBJECT);json_node_take_object(node,manifest);char *text=json_to_string(node,TRUE);
-        if(ok) ok=write_file(stage,"assets.json",text,error);
+        if(ok) ok=write_file(stage,"assets.json",text,error) && write_file(stage,"main.c",studio_game_main,error);
         g_free(text);json_node_free(node);
         if(ok && g_mkdir_with_parents(directory,0755)!=0) ok=bad(error,"Cannot create export directory.");
-        GDir *d=g_dir_open(stage,0,error);const char *entry;
+        if(ok) ok=prepare_destination(directory,stage,error);
+        GString *owned=g_string_new("");
+        GDir *d=ok?g_dir_open(stage,0,error):NULL;const char *entry;
         if(!d) ok=FALSE;
         while(d && ok && (entry=g_dir_read_name(d))) {
             char *from=g_build_filename(stage,entry,NULL);
             if(g_file_test(from,G_FILE_TEST_IS_REGULAR)) {
-                char *bytes=NULL,*to=g_build_filename(directory,entry,NULL);gsize length=0;
-                ok=g_file_get_contents(from,&bytes,&length,error) && g_file_set_contents(to,bytes,length,error);g_free(bytes);g_free(to);
+                char *bytes=NULL,*lower=g_ascii_strdown(entry,-1);
+                char *to=g_build_filename(directory,g_str_has_suffix(lower,".tim")?entry:lower,NULL);gsize length=0;
+                ok=!g_file_test(to,G_FILE_TEST_IS_SYMLINK);
+                if(!ok) bad(error,"Generated export files cannot be symbolic links.");
+                if(ok) ok=g_file_get_contents(from,&bytes,&length,error);
+                if(ok && (g_str_has_suffix(lower,".c") || g_str_has_suffix(lower,".h"))) {
+                    GString *normalized=g_string_new(bytes);
+                    GRegex *inc=g_regex_new("#[ \t]*include[ \t]+\"([LMS][0-9]+[.][CH])\"",0,0,NULL);
+                    GMatchInfo *matches=NULL;g_regex_match(inc,bytes,0,&matches);
+                    while(g_match_info_matches(matches)) {
+                        char *name=g_match_info_fetch(matches,1),*small=g_ascii_strdown(name,-1);
+                        g_string_replace(normalized,name,small,0);g_free(name);g_free(small);
+                        g_match_info_next(matches,NULL);
+                    }
+                    g_match_info_free(matches);g_regex_unref(inc);
+                    ok=g_file_set_contents(to,normalized->str,normalized->len,error);g_string_free(normalized,TRUE);
+                } else if(ok) ok=g_file_set_contents(to,bytes,length,error);
+                if(ok) g_string_append_printf(owned,"%s\n",g_str_has_suffix(lower,".tim")?entry:lower);
+                g_free(lower);g_free(bytes);g_free(to);
             }
             g_free(from);
         }
         if(d) g_dir_close(d);
+        if(ok) ok=write_file(directory,".studio-export",owned->str,error);
+        g_string_free(owned,TRUE);
     }
     g_string_free(includes,TRUE);g_string_free(dispatch,TRUE);g_string_free(decl,TRUE);
     json_array_unref(textures);json_array_unref(modules);g_ptr_array_unref(samples);remove_stage(stage);g_free(stage);return ok;
+}
+
+/* Resource-bank exports use only the engine's C asset-list contract. Scene IDs,
+ * object defaults, collisions and logic still come exclusively from Studio. */
+static char *bank_asset(const Project *p,const char *relative,const char *directory,
+                        GHashTable *copied,GError **error)
+{
+    if(!*relative) return g_strdup("");
+    const char *existing=g_hash_table_lookup(copied,relative);
+    if(existing) return g_strdup(existing);
+    char *original=asset_path(p,relative),*bytes=NULL;gsize length=0;
+    if(!original || !g_file_get_contents(original,&bytes,&length,error)) {g_free(original);return NULL;}
+    const char *extension=strrchr(relative,'.');
+    char *name=g_strdup_printf("a%07u%s",g_hash_table_size(copied),extension?extension:"");
+    char *target=g_build_filename(directory,name,NULL);
+    gboolean ok=!g_file_test(target,G_FILE_TEST_IS_SYMLINK);
+    if(!ok) bad(error,"Generated resources cannot be symbolic links.");
+    if(ok) ok=g_file_set_contents(target,bytes,length,error);
+    g_free(original);g_free(bytes);g_free(target);
+    if(!ok) {g_free(name);return NULL;}
+    g_hash_table_insert(copied,g_strdup(relative),g_strdup(name));return name;
+}
+
+gboolean project_export_engine(const Project *p,const char *directory,GError **error)
+{
+    if(!project_export(p,directory,error)) return FALSE;
+    char *resources=g_build_filename(directory,"resources",NULL);
+    if(g_file_test(resources,G_FILE_TEST_IS_SYMLINK) || g_mkdir_with_parents(resources,0755)!=0) {
+        g_free(resources);return bad(error,"Cannot create generated resource folder.");
+    }
+    char *owner=g_build_filename(resources,".studio-resources",NULL);
+    if(g_file_test(owner,G_FILE_TEST_IS_SYMLINK)) {g_free(owner);g_free(resources);return bad(error,"Invalid resource ownership marker.");}
+    if(!g_file_test(owner,G_FILE_TEST_IS_REGULAR)) {
+        GDir *existing=g_dir_open(resources,0,error);
+        gboolean empty=existing && !g_dir_read_name(existing);
+        if(existing) g_dir_close(existing);
+        if(!empty) {g_free(owner);g_free(resources);return bad(error,"Resource folder is not managed by PSX Studio.");}
+    }
+    gboolean marked=write_file(resources,".studio-resources","PSX Studio generated resources\n",error);
+    g_free(owner);
+    if(!marked) {g_free(resources);return FALSE;}
+    GHashTable *copied=g_hash_table_new_full(g_str_hash,g_str_equal,g_free,g_free);
+    GString *list=g_string_new("/* Generated C asset list; no scene authoring data. */\n");
+    gboolean ok=TRUE;
+    for(guint n=0;ok && n<p->scenes->len;n++) {
+        Project view;ok=project_scene_view(p,n,&view,error);
+        if(!ok) {project_clear(&view);break;}
+        char *background=bank_asset(&view,view.background,resources,copied,error);
+        if(!background) ok=FALSE;
+        if(ok) g_string_append_printf(list,"PSX_BANK(%u, \"%s\")\n",n+1,background);
+        g_free(background);
+        for(guint j=0;ok && j<view.background_layers->len;j++) {
+            BackgroundLayer *layer=g_ptr_array_index(view.background_layers,j);
+            char *path=bank_asset(&view,layer->path,resources,copied,error);
+            if(path) g_string_append_printf(list,"PSX_LAYER(\"%s\", %d)\n",path,layer->depth);
+            else ok=FALSE;
+            g_free(path);
+        }
+        GString *meshes=g_string_new("");
+        for(guint j=0;ok && j<view.objects->len;j++) {
+            Object *object=g_ptr_array_index(view.objects,j);
+            if(object->kind!=OBJECT_CAMERA) {
+                char *model=bank_asset(&view,object->asset,resources,copied,error);
+                char *texture=model?bank_asset(&view,object->texture,resources,copied,error):NULL;
+                if(!model || !texture) ok=FALSE;
+                if(ok && !*model && !*texture) {
+                    /* Engine resource entries need an explicit resource. Keep
+                     * Studio's default cube/quad geometry rather than changing
+                     * its visual size to the renderer's collider fallback. */
+                    Asset *asset=asset_load(&view,object,error);
+                    GString *obj=g_string_new("");
+                    if(!asset) ok=FALSE;
+                    for(guint v=0;asset && v<asset->vertices->len;v++) {
+                        AssetVertex *vertex=&g_array_index(asset->vertices,AssetVertex,v);
+                        g_string_append_printf(obj,"v %ld %ld %ld\n",lround(vertex->p[0]),lround(vertex->p[1]),lround(vertex->p[2]));
+                    }
+                    for(guint v=0;asset && v<asset->vertices->len;v+=3)
+                        g_string_append_printf(obj,"f %u %u %u\n",v+1,v+2,v+3);
+                    g_free(model);model=g_strdup_printf("d%u.obj",object->kind);
+                    if(ok) ok=write_file(resources,model,obj->str,error);
+                    asset_free(asset);g_string_free(obj,TRUE);
+                }
+                const char *kind=object->kind==OBJECT_MESH?"mesh":object->kind==OBJECT_SPRITE?"sprite":"billboard";
+                if(ok) {
+                    g_string_append_printf(list,"PSX_MODEL(%u, %s, \"%s\", \"%s\")\n",object->id,kind,model,texture);
+                    g_string_append_printf(meshes,"objects[%u].mesh=psx_resource_mesh(&psx_bank_%u,%uU);\n",j,n+1,object->id);
+                }
+                g_free(model);g_free(texture);
+            }
+            if(ok && *object->module) {
+                char *path=asset_path(&view,object->module),*code=NULL;
+                ok=path && g_file_get_contents(path,&code,NULL,error);g_free(path);
+                if(ok) {
+                    GRegex *regex=g_regex_new("@sound[ \t]+([^ \t\r\n*]+)",0,0,NULL);GMatchInfo *match=NULL;
+                    g_regex_match(regex,code,0,&match);
+                    while(ok && g_match_info_matches(match)) {
+                        char *sound=g_match_info_fetch(match,1),*from=asset_path(&view,sound),*bytes=NULL;gsize length=0;
+                        ok=from && g_file_get_contents(from,&bytes,&length,error);
+                        char *to=g_build_filename(resources,sound,NULL);
+                        if(ok && g_file_test(to,G_FILE_TEST_IS_SYMLINK)) ok=bad(error,"Generated resources cannot be symbolic links.");
+                        if(ok) ok=g_file_set_contents(to,bytes,length,error);
+                        if(ok) g_string_append_printf(list,"PSX_SOUND(\"%s\")\n",sound);
+                        g_free(sound);g_free(from);g_free(bytes);g_free(to);g_match_info_next(match,NULL);
+                    }
+                    g_match_info_free(match);g_regex_unref(regex);
+                }
+                g_free(code);
+            }
+        }
+        g_string_append(list,"PSX_END()\n");
+        char *name=g_strdup_printf("s%03u.h",n),*code=ok?read_stage(directory,name,error):NULL;
+        if(ok && !code) ok=FALSE;
+        if(ok) {
+            const char *defaults=strstr(code,"static const PsxObject object_defaults");
+            const char *title=strstr(code,"static const char *studio_scene_name=");
+            const char *end=title?strchr(title,'\n'):NULL;
+            if(!defaults || !title || !end) ok=bad(error,"Invalid generated Scene tables.");
+            if(ok) {
+                GString *out=g_string_new("#include \"assets.h\"\n");
+                g_string_append_len(out,title,end-title+1);
+                g_string_append(out,"static PsxTexture *studio_textures;\nstatic unsigned int studio_texture_count;\n");
+                /* Preserve renamed module extern declarations from the prefix. */
+                GRegex *externs=g_regex_new("extern const PsxLogic [^;]+;",0,0,NULL);GMatchInfo *match=NULL;
+                g_regex_match(externs,code,0,&match);
+                while(g_match_info_matches(match)) {char *line=g_match_info_fetch(match,0);g_string_append_printf(out,"%s\n",line);g_free(line);g_match_info_next(match,NULL);}
+                g_match_info_free(match);g_regex_unref(externs);
+                g_string_append(out,defaults);
+                GRegex *mesh=g_regex_new("&mesh_[0-9]+",0,0,NULL);
+                char *trim=g_regex_replace_literal(mesh,out->str,-1,0,"0",0,NULL);g_string_assign(out,trim);g_free(trim);g_regex_unref(mesh);
+                GRegex *sounds=g_regex_new("scene[.]sounds=[^\n]+\n",0,0,NULL);
+                trim=g_regex_replace_literal(sounds,out->str,-1,0,"",0,NULL);g_string_assign(out,trim);g_free(trim);g_regex_unref(sounds);
+                GString *apply=g_string_new(meshes->str);
+                g_string_append_printf(apply,"psx_resource_apply(&scene,&psx_bank_%u);\nstudio_textures=psx_bank_%u.textures;studio_texture_count=psx_bank_%u.texture_count;\nreturn &scene;",n+1,n+1,n+1);
+                g_string_replace(out,"return &scene;",apply->str,0);g_string_free(apply,TRUE);
+                ok=write_file(directory,name,out->str,error);g_string_free(out,TRUE);
+            }
+        }
+        g_free(code);g_free(name);g_string_free(meshes,TRUE);project_clear(&view);
+    }
+    /* Resource units and TIMs are generated by --resources, not compiled twice
+     * through the direct-C scanner. Only logic wrappers remain in this folder. */
+    GDir *dir=ok?g_dir_open(directory,0,error):NULL;const char *entry;
+    while(ok && dir && (entry=g_dir_read_name(dir))) {
+        gboolean remove=g_str_has_suffix(entry,".TIM");
+        if(entry[0]=='m' && g_ascii_isdigit(entry[1]) && g_str_has_suffix(entry,".c")) {
+            char *code=read_stage(directory,entry,error);if(!code) ok=FALSE;
+            if(code && g_str_has_prefix(code,"const unsigned int sound_")) remove=TRUE;
+            g_free(code);
+        }
+        if(remove) {char *path=g_build_filename(directory,entry,NULL);if(g_unlink(path)!=0) ok=bad(error,"Cannot remove superseded generated resource.");g_free(path);}
+    }
+    if(dir) g_dir_close(dir);
+    if(ok) ok=write_file(directory,"reslist.h",list->str,error);
+    if(ok) {
+        char *path=g_build_filename(directory,"assets.json",NULL);JsonParser *parser=json_parser_new();
+        ok=json_parser_load_from_file(parser,path,error);
+        if(ok) {
+            JsonObject *manifest=json_node_get_object(json_parser_get_root(parser));
+            json_object_set_array_member(manifest,"textures",json_array_new());
+            json_object_set_string_member(manifest,"resources","reslist.h");
+            json_object_set_string_member(manifest,"asset_root","resources");
+            JsonArray *modules=json_object_get_array_member(manifest,"modules"),*live=json_array_new();
+            for(guint i=0;i<json_array_get_length(modules);i++) {
+                const char *unit=json_array_get_string_element(modules,i);
+                char *file=g_build_filename(directory,unit,NULL);
+                if(g_file_test(file,G_FILE_TEST_IS_REGULAR)) json_array_add_string_element(live,unit);
+                g_free(file);
+            }
+            json_object_set_array_member(manifest,"modules",live);
+            char *text=json_to_string(json_parser_get_root(parser),TRUE);
+            ok=g_file_set_contents(path,text,-1,error);g_free(text);
+        }
+        g_object_unref(parser);g_free(path);
+    }
+    if(ok) {
+        char *marker=read_stage(directory,".studio-export",error);
+        if(marker) {char *updated=g_strconcat(marker,"reslist.h\n",NULL);ok=write_file(directory,".studio-export",updated,error);g_free(updated);}
+        else ok=FALSE;
+        g_free(marker);
+    }
+    g_hash_table_unref(copied);g_string_free(list,TRUE);g_free(resources);return ok;
 }

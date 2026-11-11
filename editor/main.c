@@ -176,7 +176,6 @@ void studio_refresh(Studio *s)
         gtk_spin_button_set_value(GTK_SPIN_BUTTON(s->speed),o?o->speed:2);
         gtk_widget_set_sensitive(s->input_mode,o!=NULL);gtk_widget_set_sensitive(s->collision_action,o!=NULL);gtk_widget_set_sensitive(s->speed,o!=NULL);
         for(int k=0;k<6;k++) gtk_spin_button_set_value(GTK_SPIN_BUTTON(s->camera_values[k]),k<3?s->project.camera[k]+(k==2?600:0):s->project.view[k-3]);
-        gtk_editable_set_text(GTK_EDITABLE(s->dosbox),s->project.dosbox);
         gtk_editable_set_text(GTK_EDITABLE(s->emulator_entry),s->project.emulator_command);
     }
     if(s->camera_panel) {
@@ -719,26 +718,6 @@ static void detach_clicked(GtkButton *button,Studio *s)
     }
     s->project.dirty=TRUE;studio_refresh(s);
 }
-static gboolean tools_clicked(GtkButton *button,Studio *s)
-{
-    (void)button;
-    const char *dosbox=gtk_editable_get_text(GTK_EDITABLE(s->dosbox));
-    char *program=*dosbox?g_find_program_in_path(dosbox):g_find_program_in_path("dosbox-x");
-    if(!program && !*dosbox) program=g_find_program_in_path("dosbox");
-    if(!program && !*dosbox) program=g_find_program_in_path("flatpak");
-    if(!program) {studio_status(s,"DOSBox not found: specify its executable path.");return FALSE;}
-    g_free(program);
-    const char *bundled[]={"pipeline/cdrom/BUILDCD.EXE","pipeline/cdrom/STRIPISO.EXE"};
-    for(guint k=0;k<G_N_ELEMENTS(bundled);k++) {
-        char *path=g_build_filename(s->root,bundled[k],NULL);
-        gboolean exists=g_file_test(path,G_FILE_TEST_IS_REGULAR);g_free(path);
-        if(!exists) {studio_status(s,"A bundled tool is missing: check pipeline/cdrom in the PSX Studio folder.");return FALSE;}
-    }
-    g_free(s->project.dosbox);s->project.dosbox=g_strdup(dosbox);
-    s->project.dirty=TRUE;title(s);studio_status(s,"DOSBox verified and applied. Native PNG/TIM conversion; BUILDCD and STRIPISO are bundled.");
-    return TRUE;
-}
-
 static void object_camera_changed(GtkWidget *widget,Studio *s)
 {
     if(s->refreshing) return;
@@ -1099,7 +1078,6 @@ static void apply_settings(GtkButton *button,Studio *s)
     }
     studio_checkpoint(s,NULL);
     if(*gtk_editable_get_text(GTK_EDITABLE(s->psyq)) && !configure(NULL,s)) {return;}
-    if(!tools_clicked(NULL,s)) {return;}
     if(!*gtk_editable_get_text(GTK_EDITABLE(s->psyq))) {g_free(s->project.psyq_path);s->project.psyq_path=g_strdup("");}
     g_free(s->project.emulator_command);s->project.emulator_command=g_strdup(command);
     g_free(s->project.output_path);s->project.output_path=g_strdup("");s->project.dirty=TRUE;title(s);
@@ -1131,17 +1109,15 @@ static void show_settings(GtkButton *button,Studio *s)
     gtk_window_present(GTK_WINDOW(s->settings_window));
 }
 
-/* A folder picker for the SDK, an executable picker for DOSBox. */
+/* The only build-tool picker is the external SDK folder. */
 static void settings_browsed(GObject *source,GAsyncResult *result,gpointer data)
 {
     Studio *s=data;GError *error=NULL;
-    gboolean sdk=GPOINTER_TO_INT(g_object_get_data(source,"sdk-picker"));
-    GFile *file=sdk?gtk_file_dialog_select_folder_finish(GTK_FILE_DIALOG(source),result,&error):
-                    gtk_file_dialog_open_finish(GTK_FILE_DIALOG(source),result,&error);
+    GFile *file=gtk_file_dialog_select_folder_finish(GTK_FILE_DIALOG(source),result,&error);
     if(file) {
         char *path=g_file_get_path(file);
         if(path) {
-            GtkWidget *entry=sdk?s->psyq:s->dosbox;
+            GtkWidget *entry=s->psyq;
             gtk_editable_set_text(GTK_EDITABLE(entry),path);
             gtk_editable_set_position(GTK_EDITABLE(entry),0);
             gtk_widget_set_tooltip_text(entry,path);
@@ -1153,29 +1129,23 @@ static void settings_browsed(GObject *source,GAsyncResult *result,gpointer data)
 }
 static void browse_settings(GtkButton *button,Studio *s)
 {
-    gboolean sdk=GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button),"sdk-picker"));
+    (void)button;
     GtkFileDialog *dialog=gtk_file_dialog_new();gtk_file_dialog_set_modal(dialog,TRUE);
-    gtk_file_dialog_set_title(dialog,sdk?"Select Psy-Q SDK folder":"Select DOSBox executable");
-    g_object_set_data(G_OBJECT(dialog),"sdk-picker",GINT_TO_POINTER(sdk));
-    const char *path=gtk_editable_get_text(GTK_EDITABLE(sdk?s->psyq:s->dosbox));
-    char *resolved=*path?(sdk?g_canonicalize_filename(path,NULL):g_find_program_in_path(path)):NULL;
-    if(resolved) {
-        GFile *file=g_file_new_for_path(resolved);
-        if(sdk) gtk_file_dialog_set_initial_folder(dialog,file);
-        else gtk_file_dialog_set_initial_file(dialog,file);
-        g_object_unref(file);g_free(resolved);
+    gtk_file_dialog_set_title(dialog,"Select Psy-Q SDK folder");
+    const char *path=gtk_editable_get_text(GTK_EDITABLE(s->psyq));
+    if(*path) {
+        char *resolved=g_canonicalize_filename(path,NULL);GFile *file=g_file_new_for_path(resolved);
+        gtk_file_dialog_set_initial_folder(dialog,file);g_object_unref(file);g_free(resolved);
     }
-    if(sdk) gtk_file_dialog_select_folder(dialog,GTK_WINDOW(s->settings_window),NULL,settings_browsed,s);
-    else gtk_file_dialog_open(dialog,GTK_WINDOW(s->settings_window),NULL,settings_browsed,s);
+    gtk_file_dialog_select_folder(dialog,GTK_WINDOW(s->settings_window),NULL,settings_browsed,s);
     g_object_unref(dialog);
 }
-static GtkWidget *settings_path(Studio *s,GtkWidget *box,const char *label,gboolean sdk)
+static GtkWidget *settings_path(Studio *s,GtkWidget *box,const char *label)
 {
     GtkWidget *title=gtk_label_new(label);gtk_label_set_xalign(GTK_LABEL(title),0);gtk_box_append(GTK_BOX(box),title);
     GtkWidget *row=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,6);gtk_box_append(GTK_BOX(box),row);
     GtkWidget *entry=gtk_entry_new();gtk_widget_set_hexpand(entry,TRUE);gtk_box_append(GTK_BOX(row),entry);
-    GtkWidget *browse=button(row,"Browse...",G_CALLBACK(browse_settings),s);
-    g_object_set_data(G_OBJECT(browse),"sdk-picker",GINT_TO_POINTER(sdk));
+    button(row,"Browse...",G_CALLBACK(browse_settings),s);
     return entry;
 }
 static void create_settings(Studio *s)
@@ -1193,14 +1163,12 @@ static void create_settings(Studio *s)
     s->project_name=gtk_entry_new();gtk_box_append(GTK_BOX(box),s->project_name);
     g_signal_connect(s->project_name,"changed",G_CALLBACK(project_name_changed),s);
     gtk_box_append(GTK_BOX(box),heading("BUILD TOOLS"));
-    s->psyq=settings_path(s,box,"Psy-Q SDK folder",TRUE);
+    s->psyq=settings_path(s,box,"Psy-Q SDK folder");
     gtk_entry_set_placeholder_text(GTK_ENTRY(s->psyq),"Select the folder containing psyq/, include/ and lib/");
     s->sdk_source=gtk_label_new("");gtk_label_set_wrap(GTK_LABEL(s->sdk_source),TRUE);
     gtk_label_set_selectable(GTK_LABEL(s->sdk_source),TRUE);gtk_label_set_xalign(GTK_LABEL(s->sdk_source),0);
     gtk_label_set_max_width_chars(GTK_LABEL(s->sdk_source),80);
     gtk_box_append(GTK_BOX(box),s->sdk_source);
-    s->dosbox=settings_path(s,box,"DOSBox executable",FALSE);
-    gtk_entry_set_placeholder_text(GTK_ENTRY(s->dosbox),"Automatic detection, or select an executable");
     gtk_box_append(GTK_BOX(box),heading("EMULATOR"));
     GtkWidget *label=gtk_label_new("Launch command");gtk_label_set_xalign(GTK_LABEL(label),0);gtk_box_append(GTK_BOX(box),label);
     s->emulator_entry=gtk_entry_new();gtk_box_append(GTK_BOX(box),s->emulator_entry);
@@ -1526,7 +1494,7 @@ int main(int argc, char **argv)
     if (project_path && studio.project.objects->len) studio.selected = 0;
     if (export_path) {
         studio.project.asset_root=asset_root?g_canonicalize_filename(asset_root,NULL):NULL;g_free(asset_root);
-        gboolean ok = project_export(&studio.project, output_path, &error);
+        gboolean ok = project_export_engine(&studio.project, output_path, &error);
         if (ok) g_print("Exported %u Scene(s) to C89: %s\n", studio.project.scenes->len, output_path);
         else { g_printerr("Export failed: %s\n", error->message); g_clear_error(&error); }
         project_clear(&studio.project); g_free(project_path); g_free(export_path); g_free(output_path); return ok ? 0 : 1;

@@ -1,21 +1,21 @@
-"""Optional developer tests of the native pipeline; Python is not used by builds."""
+"""Studio/engine boundary checks; Python is a developer-test dependency only."""
 import contextlib
 import json
 import os
 from pathlib import Path
 import shutil
-import struct
 import subprocess
 import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 EDITOR = ROOT / 'build' / ('psx-studio.exe' if os.name == 'nt' else 'psx-studio')
+ENGINE_ROOT = Path(os.environ.get('PSX_LIB_ROOT', ROOT / 'psx-lib'))
+ENGINE = Path(os.environ.get('PSX_LIB', ENGINE_ROOT / 'build' / ('psx-lib.exe' if os.name == 'nt' else 'psx-lib')))
 
 
 @contextlib.contextmanager
 def build_lock(path):
-    # Interoperate with the native pipeline's OS lock from a second process.
     with path.open('a+b') as lock:
         if os.name == 'nt':
             import msvcrt
@@ -29,25 +29,22 @@ def build_lock(path):
 
 class BuildTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix='pipeline-test-', dir=ROOT / 'build')
-        self.root = Path(self.temp.name)
-        shutil.copytree(ROOT / 'pipeline', self.root / 'pipeline')
-        shutil.copytree(ROOT / 'runtime', self.root / 'runtime')
-        self.sdk = self.root / 'sdk'
-        for name in ('psyq', 'include', 'lib'):
-            (self.sdk / name).mkdir(parents=True, exist_ok=True)
-        for name in ('CCPSX.EXE', 'PSYMAKE.EXE'):
-            (self.sdk / 'psyq' / name).touch()
+        self.temp = tempfile.TemporaryDirectory(prefix='studio-engine-', dir=ROOT / 'build')
+        self.root = Path(self.temp.name).resolve()
         self.project = self.root / 'game.psx'
-        # Keep the output-management fixture independent of demo assets/Scenes.
         self.data = {
-            'version': 1, 'name': 'Pipeline fixture', 'psyq_path': '',
+            'version': 1, 'name': 'Engine integration', 'psyq_path': '',
             'camera': [0, 0, -600],
             'objects': [{'id': 1, 'name': 'Cube', 'kind': 'mesh',
                          'position': [0, 24, 0], 'rotation': [0, 0, 0],
                          'scale': [1, 1, 1], 'bounds': [24, 24, 24],
                          'solid': True, 'asset': '', 'module': ''}],
         }
+        self.sdk = self.root / 'sdk'
+        for name in ('psyq', 'include', 'lib'):
+            (self.sdk / name).mkdir(parents=True)
+        for name in ('CCPSX.EXE', 'PSYMAKE.EXE'):
+            (self.sdk / 'psyq' / name).touch()
         self.save()
 
     def tearDown(self):
@@ -56,339 +53,324 @@ class BuildTests(unittest.TestCase):
     def save(self):
         self.project.write_text(json.dumps(self.data))
 
-    def prepare(self):
-        result = subprocess.run([str(EDITOR), '--build-ps1', '--project', str(self.project),
-                                 '--psyq', str(self.sdk), '--root', str(self.root), '--prepare-only'],
-                                capture_output=True, text=True, encoding='utf-8')
-        if result.returncode:
-            raise RuntimeError(result.stdout + result.stderr)
+    def run_build(self, *extra, engine=ENGINE, success=True, prepare=True, env=None):
+        args = [str(EDITOR), '--build-ps1', '--root', str(self.root),
+                '--project', str(self.project), '--psyq', str(self.sdk)]
+        if engine is not None:
+            args += ['--engine', str(engine)]
+        if prepare:
+            args += ['--prepare-only']
+        result = subprocess.run(args + list(extra), capture_output=True, text=True, env=env)
+        if success:
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        else:
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result
+
+    def sources(self):
+        return next((self.root / 'build/studio-projects').glob('*/source'))
 
     def output(self):
-        paths = list((self.root / 'build/ps1').iterdir())
-        self.assertEqual(len(paths), 1)
-        return paths[0]
+        return next((self.root / 'build/engine/ps1').iterdir())
 
-    def test_same_project_reuses_directory_and_refreshes_snapshot(self):
-        self.prepare()
-        output = self.output()
-        self.assertEqual(output, self.root / 'build/ps1/game')
-        self.data['objects'][0]['position'][0] = 77
-        self.save()
-        self.prepare()
-        self.assertEqual(output, self.output())
-        self.assertEqual(json.loads((output / 'project.snapshot.psx').read_text()), self.data)
-        self.assertTrue((output / 'src/scene.c').is_file())
-        self.assertIn('@sources.rsp', (output / 'src/makefile.mak').read_text())
-        self.assertIn('scene.c', (output / 'src/sources.rsp').read_text())
-        self.assertTrue((output / 'src/camera.h').read_text().startswith('#define PSX_RUNTIME_FIXED_ONLY 1\n'))
+    def require_engine(self):
+        if not ENGINE.is_file():
+            self.skipTest('Set PSX_LIB to an external engine with the direct-C build interface.')
 
-    def test_renderer_buffers_fit_largest_scene(self):
-        small = dict(self.data)
-        large = dict(self.data)
-        large['objects'] = [dict(self.data['objects'][0], id=i + 1) for i in range(37)]
-        self.data = dict(self.data, version=3, active_scene=1, startup_scene=1,
-                         scenes=[{'id': 1, 'name': 'Small', 'data': small},
-                                 {'id': 2, 'name': 'Large', 'data': large}])
+    def bundle_framework(self, packaged=False):
+        bundled = self.root / 'psx-lib'
+        bundled.mkdir()
+        for directory in ('runtime', 'pipeline'):
+            shutil.copytree(ENGINE_ROOT / directory, bundled / directory)
+        if packaged:
+            binary = self.root / ('psx-lib.exe' if os.name == 'nt' else 'psx-lib')
+        else:
+            (bundled / 'build').mkdir()
+            binary = bundled / 'build' / ENGINE.name
+        shutil.copy2(ENGINE, binary)
+        return binary
+
+    def test_bundled_framework_is_selected_without_a_setting(self):
+        self.require_engine()
+        binary = self.bundle_framework()
+        self.data['engine_path'] = '/obsolete/psx-engine'
         self.save()
-        self.prepare()
-        output = self.output()
-        header = (output / 'src/psx.h').read_text()
-        self.assertIn('#define STUDIO_OBJECT_LIMIT 37', header)
-        self.assertIn('#define STUDIO_DRAW_LIMIT 512', header)
-        self.assertEqual(json.loads((output / 'src/assets.json').read_text())['max_objects'], 37)
-        # Rebuilding after removing a Scene must reclaim its buffer allocation.
-        self.data['scenes'].pop()
-        self.save()
-        self.prepare()
+        result = self.run_build(engine=None)
+        self.assertIn(str(binary), result.stdout)
+        self.assertTrue((self.output() / 'src/main.c').exists())
+
+    @unittest.skipIf(os.name != 'nt', 'Windows package executable layout')
+    def test_packaged_framework_is_selected_without_path_lookup(self):
+        self.require_engine()
+        binary = self.bundle_framework(packaged=True)
+        result = self.run_build(engine=None)
+        self.assertIn(str(binary), result.stdout)
+        self.assertTrue((self.output() / 'src/main.c').exists())
+
+    def test_explicit_missing_framework_does_not_use_the_bundle(self):
+        self.require_engine()
+        self.bundle_framework()
+        result = self.run_build(engine=self.root / 'missing-lib', success=False)
+        self.assertIn('PSX Lib not found', result.stderr)
+        self.assertFalse((self.root / 'build/studio-projects').exists())
+
+    def test_missing_engine_is_explicit(self):
+        result = self.run_build(engine=self.root / 'missing-engine', success=False)
+        self.assertIn('PSX Lib not found', result.stderr)
+        self.assertFalse((self.root / 'build/studio-projects').exists())
+
+    def test_no_bundled_runtime_or_sdk_tools(self):
+        self.assertFalse((ROOT / 'runtime').exists())
+        self.assertFalse((ROOT / 'pipeline').exists())
+
+    @unittest.skipIf(os.name == 'nt', 'Relative POSIX executable-path regression')
+    def test_relative_launcher_reuses_canonical_engine_source_identity(self):
+        self.require_engine()
+        (self.root / 'build').mkdir()
+        shutil.copy2(EDITOR, self.root / 'build/psx-studio')
+        args = ['./build/psx-studio', '--build-ps1', '--project', str(self.project),
+                '--engine', str(ENGINE), '--psyq', str(self.sdk), '--prepare-only']
+        for _ in range(2):
+            result = subprocess.run(args, cwd=self.root, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.output() / '.psx-studio-build').read_text(), str(self.sources()))
+
+    def test_real_engine_prepares_only_c_sources(self):
+        self.require_engine()
+        self.run_build()
+        source, output = self.sources(), self.output()
+        self.assertEqual((output / '.psx-studio-build').read_text(), str(source))
+        self.assertNotIn('--project', (output / 'BUILD.BAT').read_text())
+        units = (output / 'src/sources.rsp').read_text().lower().split()
+        self.assertEqual(units.count('scene.c'), 1)
+        self.assertNotIn('s000.h', units)
+        self.assertIn('"s000.h"', (source / 'scene.c').read_text())
+        self.assertIn('psDrawOverlay()', (source / 'main.c').read_text())
+        self.assertNotIn('psDrawHud', (source / 'main.c').read_text())
+        self.assertEqual((output / 'src/main.c').read_text(), (source / 'main.c').read_text())
         self.assertIn('#define STUDIO_OBJECT_LIMIT 1', (output / 'src/psx.h').read_text())
+        config = (output / 'dos.conf').read_text()
+        self.assertIn('private area size=131072', config)
+        self.assertIn('ems=false', config)
+        self.assertFalse((output / 'SUCCESS.OK').exists())
 
-    def test_background_is_snapshotted_and_split_into_native_tim_tiles(self):
-        import zlib
-        data = self.project.with_name('game_psx_data') / 'plates'
-        data.mkdir(parents=True)
-        def chunk(kind, payload):
-            return struct.pack('>I', len(payload)) + kind + payload + struct.pack('>I', zlib.crc32(kind + payload))
-        png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 640, 512, 8, 2, 0, 0, 0))
-        png += chunk(b'IDAT', zlib.compress((b'\0' + b'\x80\x40\x20' * 640) * 512)) + chunk(b'IEND', b'')
-        (data / 'room.png').write_bytes(png)
-        self.data['background'] = 'plates/room.png'
-        self.save()
-        self.prepare()
+    def test_generated_application_uses_current_engine_c89_api(self):
+        self.require_engine()
+        if not shutil.which('cc'):
+            self.skipTest('C compiler unavailable')
+        self.run_build()
+        src = self.output() / 'src'
+        headers = self.root / 'host-api'
+        headers.mkdir()
+        # Keep the actual engine API declarations; host syntax checking does
+        # not need Psy-Q system/library types used only inside its backends.
+        public = (src / 'psx.h').read_text()
+        (headers / 'psx.h').write_text('\n'.join(
+            line for line in public.splitlines() if not line.startswith('#include <')))
+        shutil.copyfile(src / 'main.c', headers / 'main.c')
+        result = subprocess.run(['cc', '-std=c89', '-pedantic-errors', '-Wall', '-Wextra',
+                                 '-Werror', '-fsyntax-only', '-I' + str(headers), '-I' + str(src),
+                                 str(headers / 'main.c'), str(src / 'scene.c')],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_failed_export_invalidates_previous_success(self):
+        self.require_engine()
+        self.run_build()
         output = self.output()
-        self.assertEqual((output / 'data/plates/room.png').read_bytes(), png)
-        manifest = json.loads((output / 'src/assets.json').read_text())
-        self.assertEqual([(t['x'], t['y'], t['width'], t['height']) for t in manifest['textures']],
-                         [(320, 0, 256, 256), (576, 0, 64, 256)])
-        self.assertIn('scene.background_texture=1U', (output / 'src/S000.C').read_text())
-        for texture in manifest['textures']:
-            self.assertEqual((output / 'data' / texture['file']).stat().st_size,
-                             20 + texture['width'] * texture['height'] * 2)
-        (data / 'room.png').unlink()
-        with self.assertRaises(RuntimeError):
-            self.prepare()
-        self.assertFalse((output / 'data/plates/room.png').exists())
+        (output / 'SUCCESS.OK').write_text('success')
+        (output / '.studio-project').write_text(str(self.project))
+        self.data['objects'][0]['module'] = 'missing.c'
+        self.save()
+        self.run_build(success=False)
+        self.assertFalse((output / 'SUCCESS.OK').exists())
+        self.assertFalse((output / '.studio-project').exists())
 
-    def test_depth_layer_snapshot_alpha_and_native_crop(self):
+    def test_texture_is_packaged_by_the_external_engine(self):
+        self.require_engine()
+        import struct
         import zlib
-        folder = self.project.with_name('game_psx_data') / 'plates'
-        folder.mkdir(parents=True)
         def chunk(kind, data):
             return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
-        rows = []
-        for y in range(256):
-            row = bytearray()
-            for x in range(320):
-                opaque = 40 <= x < 120 and 120 <= y < 180 and (x, y) != (50, 130)
-                row.extend((128, 64, 32, 255 if opaque else 0))
-            rows.append(b'\0' + row)
-        png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 320, 256, 8, 6, 0, 0, 0))
-        png += chunk(b'IDAT', zlib.compress(b''.join(rows))) + chunk(b'IEND', b'')
-        (folder / 'counter.png').write_bytes(png)
-        self.data['background_layers'] = [{'path': 'plates/counter.png', 'depth': 570}]
-        self.save()
-        self.prepare()
-        output = self.output()
-        self.assertEqual((output / 'data/plates/counter.png').read_bytes(), png)
-        manifest = json.loads((output / 'src/assets.json').read_text())
-        texture = manifest['textures'][0]
-        self.assertEqual(texture['directory'], 'S000')
-        self.assertIn('Directory S000', (output / 'cdrom/CONF.CTI').read_text())
-        self.assertEqual((texture['width'], texture['height']), (80, 60))
-        tim = (output / 'data' / texture['file']).read_bytes()
-        self.assertNotEqual(struct.unpack_from('<H', tim, 20)[0], 0)
-        self.assertEqual(struct.unpack_from('<H', tim, 20 + 2*(10*80+10))[0], 0)
-        code = (output / 'src/S000.C').read_text()
-        self.assertIn('scene.backdrop_count=1U', code)
-        self.assertIn('scene.backdrops[0].depth=570L', code)
-        self.assertIn('scene.backdrops[0].x=40', code)
-        (folder / 'counter.png').unlink()
-        with self.assertRaises(RuntimeError):
-            self.prepare()
-        self.assertFalse((output / 'data/plates/counter.png').exists())
-
-    def test_long_module_list_uses_ccpsx_control_file(self):
         data = self.project.with_name('game_psx_data')
         data.mkdir()
-        for i in range(20):
-            name = f'logic{i}.c'
-            (data / name).write_text('#include "object.h"\nconst PsxLogic psx_logic={0,0,0};\n')
-            obj = dict(self.data['objects'][0], id=i+1, module=name)
-            if i == 0:
-                self.data['objects'] = [obj]
-            else:
-                self.data['objects'].append(obj)
+        png = (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 2, 2, 8, 6, 0, 0, 0))
+               + chunk(b'IDAT', zlib.compress((b'\0' + bytes([255, 0, 0, 255]) * 2) * 2))
+               + chunk(b'IEND', b''))
+        (data / 'texture.png').write_bytes(png)
+        self.data['objects'][0]['texture'] = 'texture.png'
         self.save()
-        self.prepare()
+        self.run_build()
         output = self.output()
-        command = next(line.strip() for line in (output / 'src/makefile.mak').read_text().splitlines() if 'ccpsx ' in line)
-        self.assertIn('@sources.rsp', command)
-        self.assertLess(len(command.replace('$(CFLAGS)', '-O3 -Xo$80010000 -Wall -pedantic-errors')), 126)
-        sources = (output / 'src/sources.rsp').read_text().split()
-        self.assertEqual(len([s for s in sources if s.startswith('M')]), 20)
-        self.assertIn('card.c', sources)
+        texture = json.loads((output / 'src/assets.json').read_text())['textures'][0]
+        self.assertEqual(texture['file'], 'T000.TIM')
+        self.assertEqual((output / 'data/T000.TIM').read_bytes(), (output / 'src/T000.TIM').read_bytes())
+        self.assertEqual(texture['directory'], 'B001')
+        self.assertIn('Directory B001', (output / 'cdrom/CONF.CTI').read_text())
+        self.assertIn('File T000.TIM', (output / 'cdrom/CONF.CTI').read_text())
+        self.assertIn('ASSETS\\\\B001\\\\T000.TIM', (output / 'src/rb001.c').read_text())
 
-    def test_failed_export_removes_stale_success_artifacts(self):
-        self.prepare()
-        output = self.output()
-        stale = ('src/MAIN.EXE', 'src/MAIN.CPE', 'src/BUILD.LOG', 'cdrom/GAME.ISO', 'cdrom/game.cue', 'SUCCESS.OK', 'build-info.json')
-        for name in stale:
-            (output / name).write_text('old artifact')
-        latest = self.root / 'build/last-ps1-build.txt'
-        latest.write_text(str(output) + '\n')
-        self.data['objects'][0]['asset'] = 'not-yet-supported.obj'
-        self.save()
-        with self.assertRaises((RuntimeError, OSError)):
-            self.prepare()
-        for name in stale:
-            self.assertFalse((output / name).exists(), name)
-        self.assertFalse(latest.exists())
-
-    def test_configured_output_directory(self):
-        self.data['output_path'] = 'exports'
-        self.save()
-        self.prepare()
-        outputs = list((self.root / 'exports').iterdir())
-        self.assertEqual(len(outputs), 1)
-        self.assertEqual((outputs[0] / '.psx-studio-build').read_text(), str(self.project))
-        self.assertTrue((outputs[0] / 'src/scene.c').is_file())
-        self.assertFalse((self.root / 'build/ps1').exists())
-
-    def test_same_filename_cannot_overwrite_another_project(self):
-        self.prepare()
-        output = self.output()
-        sentinel = output / 'SUCCESS.OK'
-        sentinel.write_text('previous success')
-        second = self.root / 'another' / 'game.psx'
-        second.parent.mkdir()
-        second.write_text(json.dumps(self.data))
-        self.project = second
-        with self.assertRaisesRegex(RuntimeError, 'another project'):
-            self.prepare()
-        self.assertEqual(sentinel.read_text(), 'previous success')
-
-    def test_referenced_vag_is_snapshotted_and_embedded(self):
+    def test_module_compiles_once_and_stale_sources_disappear(self):
+        self.require_engine()
         data = self.project.with_name('game_psx_data')
         data.mkdir()
-        shutil.copy2(ROOT / 'examples/shadow-ops_psx_data/shot.vag', data / 'shot.vag')
-        (data / 'logic.c').write_text('/* @sound shot.vag */\n#include "object.h"\nconst PsxLogic psx_logic={0,0,0};\n')
+        (data / 'logic.c').write_text('#include "object.h"\nconst PsxLogic psx_logic={0,0,0};\n')
         self.data['objects'][0]['module'] = 'logic.c'
         self.save()
-        self.prepare()
+        self.run_build()
         output = self.output()
-        self.assertEqual((output / 'data/shot.vag').read_bytes(), (data / 'shot.vag').read_bytes())
-        self.assertIn('sound_bank_1', (output / 'src/S000.C').read_text())
-        # A removed source must not be satisfied by the last build's old copy.
-        (data / 'shot.vag').unlink()
-        with self.assertRaises(RuntimeError):
-            self.prepare()
-        self.assertFalse((output / 'data/shot.vag').exists())
-
-    def test_native_texture_preparation(self):
-        self.data = json.loads((ROOT / 'examples/first-scene.psx').read_text())
-        shutil.copytree(ROOT / 'examples/first-scene_psx_data',
-                        self.project.with_name('game_psx_data'))
+        units = (output / 'src/sources.rsp').read_text().lower().split()
+        self.assertEqual(units.count('m000.c'), 1)
+        self.assertNotIn('l000.h', units)
+        self.assertNotIn('l000.c', units)
+        self.assertIn('"l000.h"', (output / 'src/m000.c').read_text())
+        self.data['objects'][0]['module'] = ''
         self.save()
-        self.prepare()
-        output = self.output()
-        manifest = json.loads((output / 'src/assets.json').read_text())
-        self.assertEqual(len(manifest['textures']), 6)
-        for texture in manifest['textures']:
-            tim = (output / 'data' / texture['file']).read_bytes()
-            size = 20 + 2 * texture['width'] * texture['height']
-            self.assertEqual(len(tim), size)
-            self.assertEqual(struct.unpack_from('<III4H', tim),
-                             (16, 2, size - 8, texture['x'], texture['y'],
-                              texture['width'], texture['height']))
-            self.assertEqual(tim, (output / 'src' / texture['file']).read_bytes())
-        self.assertIn('Native TIM:', (output / 'texture.log').read_text())
+        self.run_build()
+        self.assertFalse((output / 'src/m000.c').exists())
+        self.assertFalse((self.sources() / 'l000.h').exists())
 
-    def test_all_scene_resources_are_prepared_and_stale_scene_files_removed(self):
-        self.data = json.loads((ROOT / 'examples/first-scene.psx').read_text())
-        shutil.copytree(ROOT / 'examples/first-scene_psx_data', self.project.with_name('game_psx_data'))
+    def test_many_textures_use_separate_bank_directories(self):
+        self.require_engine()
+        import copy
+        import struct
+        import zlib
+        def chunk(kind, data):
+            return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+        data = self.project.with_name('game_psx_data')
+        data.mkdir()
+        objects = []
+        for i in range(6):
+            png = (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 2, 2, 8, 6, 0, 0, 0))
+                   + chunk(b'IDAT', zlib.compress((b'\0' + bytes([i * 30, 30, 90, 255]) * 2) * 2))
+                   + chunk(b'IEND', b''))
+            (data / f'texture{i}.png').write_bytes(png)
+            obj = copy.deepcopy(self.data['objects'][0])
+            obj.update(id=i + 1, texture=f'texture{i}.png')
+            objects.append(obj)
+        scene = dict(self.data, version=3, objects=objects)
+        self.data.update(version=3, objects=objects, active_scene=70001, startup_scene=70001,
+                         scenes=[dict(id=70001 + i, name=f'Room {i}', data=copy.deepcopy(scene))
+                                 for i in range(6)])
         self.save()
-        self.prepare()
+        self.run_build()
         output = self.output()
-        manifest = json.loads((output / 'src/assets.json').read_text())
-        self.assertEqual(len(manifest['textures']), 6)
-        self.assertEqual(len(manifest['modules']), 2)
-        self.assertTrue((output / 'src/S001.C').is_file())
-        self.assertTrue((output / 'data/player_bounds.c').is_file())
-        for texture in manifest['textures']:
-            self.assertTrue((output / 'data' / texture['file']).is_file())
-            self.assertIn('File ' + texture['file'], (output / 'cdrom/CONF.CTI').read_text())
-        # Keep the output-management fixture independent of demo assets/Scenes.
-        self.data = {
-            'version': 1, 'name': 'Pipeline fixture', 'psyq_path': '',
-            'camera': [0, 0, -600],
-            'objects': [{'id': 1, 'name': 'Cube', 'kind': 'mesh',
-                         'position': [0, 24, 0], 'rotation': [0, 0, 0],
-                         'scale': [1, 1, 1], 'bounds': [24, 24, 24],
-                         'solid': True, 'asset': '', 'module': ''}],
-        }
+        textures = json.loads((output / 'src/assets.json').read_text())['textures']
+        self.assertEqual(len(textures), 36)
+        for i in range(6):
+            directory = f'B{i + 1:03}'
+            self.assertEqual(sum(t['directory'] == directory for t in textures), 6)
+            self.assertIn('Directory ' + directory, (output / 'cdrom/CONF.CTI').read_text())
+        self.assertIn('psx_bank_6', (output / 'src/s005.h').read_text())
+        self.assertIn('case 70006U:', (output / 'src/scene.c').read_text())
+
+    def test_resource_banks_preserve_game_state_and_sound_linkage(self):
+        self.require_engine()
+        data = self.project.with_name('game_psx_data')
+        data.mkdir()
+        (data / 'logic.c').write_text('/* @sound shot.vag */\n#include "object.h"\nconst PsxLogic psx_logic={0,0,0};\n')
+        sample = bytearray(96)
+        sample[:4] = b'VAGp'
+        sample[7], sample[15], sample[18], sample[19], sample[81] = 32, 48, 43, 17, 1
+        (data / 'shot.vag').write_bytes(sample)
+        self.data['objects'][0]['module'] = 'logic.c'
         self.save()
-        self.prepare()
-        self.assertFalse((output / 'src/S001.C').exists())
+        self.run_build()
+        src = self.output() / 'src'
+        self.assertIn('PSX_SOUND("shot.vag")', (self.sources() / 'reslist.h').read_text())
+        self.assertTrue((src / 'ra000.c').exists())
+        self.assertNotIn('sound_bank_', (src / 's000.h').read_text())
+        harness = self.root / 'resource-check.c'
+        harness.write_text('#include "scene.h"\n#include <assert.h>\nint main(void){PsxScene *s; s=studio_scene_load();'
+                           'assert(s->count==1 && s->objects[0].solid);'
+                           'assert(s->objects[0].position[1]==24 && s->objects[0].logic);'
+                           'assert(s->objects[0].mesh && s->objects[0].mesh->count==36);'
+                           'assert(s->sound_count==1 && s->sounds[0].size==64);return 0;}\n')
+        if not shutil.which('cc'):
+            self.skipTest('C compiler unavailable')
+        units = [src / name for name in (src / 'sources.rsp').read_text().split()
+                 if name not in ('main.c', 'camera.c', 'psx.c', 'card.c')]
+        binary = self.root / 'resource-check'
+        result = subprocess.run(['cc', '-std=c89', '-pedantic-errors', '-Wall', '-Wextra', '-Werror',
+                                 '-I' + str(src), *map(str, units), str(harness), '-o', str(binary)],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(subprocess.run([str(binary)]).returncode, 0)
 
-    def test_concurrent_build_does_not_invalidate_running_output(self):
-        self.prepare()
-        output = self.output()
-        exe = output / 'src/MAIN.EXE'
-        exe.write_text('in progress')
-        with build_lock(output / '.build.lock'):
-            with self.assertRaisesRegex(RuntimeError, 'already running'):
-                self.prepare()
-            self.assertEqual(exe.read_text(), 'in progress')
+    def test_workspace_lock_prevents_export_races(self):
+        self.require_engine()
+        self.run_build()
+        source = self.sources()
+        before = (source / 'scene.c').read_bytes()
+        with build_lock(source.parent / '.build.lock'):
+            result = self.run_build(success=False)
+        self.assertIn('already running', result.stderr)
+        self.assertEqual((source / 'scene.c').read_bytes(), before)
 
+    def test_legacy_engine_setting_is_ignored_and_output_override_works(self):
+        self.require_engine()
+        self.data['engine_path'] = '/obsolete/psx-engine'
+        self.save()
+        custom = self.root / 'custom output'
+        self.run_build('--output-root', str(custom))
+        source = self.sources()
+        outputs = list(custom.iterdir())
+        self.assertEqual(len(outputs), 1)
+        self.assertEqual((outputs[0] / '.psx-studio-build').read_text(), str(source))
 
-class VerifyTests(unittest.TestCase):
-    """Synthetic discs exercise native verification without compiling any game."""
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix='native-disc-')
-        self.root = Path(self.temp.name)
-        for name in ('src', 'cdrom', 'data'):
-            (self.root / name).mkdir()
-        (self.root / 'SUCCESS.OK').touch()
-        (self.root / 'src/BUILD.LOG').write_text('Build completed: 0 errors\n')
-        (self.root / 'src/MAIN.EXE').write_bytes(b'PS-X EXE' + bytes(56))
-        (self.root / 'cdrom/SYSTEM.CNF').write_bytes(b'BOOT = cdrom:\\MAIN.EXE;1\r\n')
-        (self.root / 'data/T000.TIM').write_bytes(bytes(range(22)))
-        (self.root / 'src/assets.json').write_text(json.dumps({'textures': [{'file': 'T000.TIM'}], 'modules': []}))
+    def test_engine_failure_is_not_a_successful_build(self):
+        self.require_engine()
+        self.run_build('--engine', str(ENGINE), '--psyq', str(self.root / 'bad-sdk'), success=False)
+        self.assertFalse((self.root / 'build/engine/ps1').exists())
 
-    def tearDown(self):
-        self.temp.cleanup()
+    def test_same_filename_projects_are_isolated(self):
+        self.require_engine()
+        self.run_build()
+        (self.root / 'other').mkdir()
+        self.project = self.root / 'other/game.psx'
+        self.save()
+        self.run_build()
+        self.assertEqual(len(list((self.root / 'build/engine/ps1').iterdir())), 2)
 
-    @staticmethod
-    def record(name, sector, count, flags=0):
-        name = name.encode('ascii')
-        record = bytearray(33 + len(name) + ((33 + len(name)) % 2))
-        record[0] = len(record)
-        record[2:6] = struct.pack('<I', sector)
-        record[6:10] = struct.pack('>I', sector)
-        record[10:14] = struct.pack('<I', count)
-        record[14:18] = struct.pack('>I', count)
-        record[25] = flags
-        record[28:32] = b'\x01\x00\x00\x01'
-        record[32] = len(name)
-        record[33:33+len(name)] = name
-        return record
-
-    def image(self, stride):
-        offset = 24 if stride == 2352 else 0
-        image = bytearray(26 * stride)
-        descriptor = bytearray(2048)
-        descriptor[:7] = b'\x01CD001\x01'
-        descriptor[156:190] = self.record('\x00', 20, 2048, 2)
-        root = bytearray()
-        for name, sector, host in (('MAIN.EXE;1', 22, 'src/MAIN.EXE'), ('SYSTEM.CNF;1', 23, 'cdrom/SYSTEM.CNF')):
-            content = (self.root / host).read_bytes()
-            image[sector*stride+offset:sector*stride+offset+len(content)] = content
-            root.extend(self.record(name, sector, len(content)))
-        root.extend(self.record('ASSETS', 21, 2048, 2))
-        texture = (self.root / 'data/T000.TIM').read_bytes()
-        entries = self.record('T000.TIM;1', 24, len(texture))
-        manifest = json.loads((self.root / 'src/assets.json').read_text())
-        directory = manifest['textures'][0].get('directory')
-        if directory:
-            image[25*stride+offset:25*stride+offset+len(entries)] = entries
-            entries = self.record(directory, 25, 2048, 2)
-        for sector, content in ((16, descriptor), (20, root), (21, entries), (24, texture)):
-            image[sector*stride+offset:sector*stride+offset+len(content)] = content
-        (self.root / 'cdrom/GAME.ISO').write_bytes(image)
-        return image, offset
-
-    def verify(self):
-        return subprocess.run([str(EDITOR), '--build-ps1', '--verify', str(self.root)],
-                              capture_output=True, text=True, encoding='utf-8')
-
-    def test_raw_and_cooked_images_and_content_mismatch(self):
-        for stride, mode in ((2352, 'MODE2/2352'), (2048, 'MODE1/2048')):
-            image, offset = self.image(stride)
-            result = self.verify()
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn(mode, (self.root / 'cdrom/game.cue').read_text())
-            image[22*stride+offset+10] ^= 1
-            (self.root / 'cdrom/GAME.ISO').write_bytes(image)
-            result = self.verify()
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn('differs', result.stderr)
-
-    def test_scene_texture_subdirectory_and_legacy_manifest(self):
-        manifest = {'textures': [{'file': 'T000.TIM', 'directory': 'S005'}], 'modules': []}
-        (self.root / 'src/assets.json').write_text(json.dumps(manifest))
-        self.image(2352)
-        result = self.verify()
+    def test_standalone_reexport_removes_obsolete_compilable_units(self):
+        data = self.project.with_name('game_psx_data')
+        data.mkdir()
+        (data / 'logic.c').write_text('#include "object.h"\nconst PsxLogic psx_logic={0,0,0};\n')
+        self.data['objects'][0]['module'] = 'logic.c'
+        self.save()
+        export = self.root / 'standalone'
+        args = [str(EDITOR), '--export', str(self.project), '--output', str(export)]
+        result = subprocess.run(args, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        manifest['textures'][0]['directory'] = '../escape'
-        (self.root / 'src/assets.json').write_text(json.dumps(manifest))
-        self.assertNotEqual(self.verify().returncode, 0)
+        self.assertTrue((export / 'm000.c').exists())
+        self.data['objects'][0]['module'] = ''
+        self.save()
+        (export / 'notes.txt').write_text('User notes')
+        result = subprocess.run(args, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((export / 'm000.c').exists())
+        self.assertFalse((export / 'l000.h').exists())
+        self.assertEqual((export / 'notes.txt').read_text(), 'User notes')
 
-    def test_invalid_directory_is_rejected(self):
-        image, offset = self.image(2352)
-        image[20*2352+offset+32] = 255
-        (self.root / 'cdrom/GAME.ISO').write_bytes(image)
-        result = self.verify()
+    def test_export_does_not_overwrite_an_unmanaged_source_tree(self):
+        export = self.root / 'user-source'
+        export.mkdir()
+        (export / 'main.c').write_text('User source')
+        result = subprocess.run([str(EDITOR), '--export', str(self.project), '--output', str(export)],
+                                capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn('Invalid ISO filename', result.stderr)
+        self.assertEqual((export / 'main.c').read_text(), 'User source')
+
+    def test_standalone_export_has_application_entry_point(self):
+        export = self.root / 'export'
+        result = subprocess.run([str(EDITOR), '--export', str(self.project), '--output', str(export)],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((export / 'main.c').is_file())
+        self.assertTrue((export / 'scene.c').is_file())
+        self.assertTrue((export / 's000.h').is_file())
+        self.assertFalse((export / 'object.h').exists())
+        self.assertFalse((export / 'psx.c').exists())
 
 
 if __name__ == '__main__':

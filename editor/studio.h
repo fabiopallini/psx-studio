@@ -4,9 +4,9 @@
 #include <gtk/gtk.h>
 #include <json-glib/json-glib.h>
 #include <epoxy/gl.h>
-#include "../runtime/camera.h"
+#include "camera.h"
 
-#define STUDIO_APP_VERSION "0.5.2"
+#define STUDIO_APP_VERSION "0.6.0"
 #define STUDIO_VERSION 3
 #define STUDIO_MAX_SCENES 16
 #define STUDIO_MAX_OBJECTS 512
@@ -39,7 +39,7 @@ typedef struct { guint id; char *name; JsonNode *data; } Scene;
 typedef struct { char *path; int depth; } BackgroundLayer;
 typedef struct {
     char *name, *path, *psyq_path, *asset_root;
-    char *dosbox, *output_path, *emulator_command, *background;
+    char *output_path, *emulator_command, *background;
     GPtrArray *objects,*background_layers;
     guint next_id;
     double camera[3];
@@ -83,7 +83,7 @@ typedef struct {
     GtkWidget *emulator_entry;
     gboolean build_and_exit;
     GtkWidget *texture_label, *asset_label, *module_label, *input_mode, *collision_action, *speed;
-    GtkWidget *camera_values[6], *dosbox, *settings_window, *settings_status, *sdk_source;
+    GtkWidget *camera_values[6], *settings_window, *settings_status, *sdk_source;
 } Studio;
 
 void project_init(Project *p);
@@ -106,10 +106,14 @@ gboolean project_load(Project *p, const char *path, GError **error);
 gboolean project_save(Project *p, const char *path, GError **error);
 char *project_data_path(const char *path);
 char *project_build_output(const Project *project, const char *root);
+char *project_build_name(const Project *project);
+char *project_engine_output(const Project *project,const char *root);
+char *studio_engine_program(const char *configured,const char *root,GError **error);
 char *project_build_sdk(const Project *project, const char *root);
 char **project_emulator_argv(const char *command,const char *cue,const char *iso,GError **error);
 gboolean project_validate(const Project *p, GError **error);
 gboolean project_export(const Project *p, const char *directory, GError **error);
+gboolean project_export_engine(const Project *p,const char *directory,GError **error);
 int studio_build_main(int argc, char **argv);
 char *studio_install_root(const char *executable);
 void studio_refresh(Studio *s);

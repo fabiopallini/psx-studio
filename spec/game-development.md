@@ -30,8 +30,8 @@ are absent; generic export and audio tests remain independent of example assets.
 | Shape, UVs, appearance | OBJ/PNG in the game's data folder; Shadow Ops model generator |
 | Combat, AI, inventory, objectives, custom transitions | Referenced C89 modules |
 | Project loading/validation, export | `editor/project.c`, `editor/scenes.c`, `editor/export.c` |
-| Shared simulation and console APIs | `runtime/object.h`, `runtime/object.c` |
-| Console drawing/timing | `pipeline/template/src/psx.c`, `pipeline/project-main.c`, runtime headers |
+| Shared simulation and console APIs | `psx-lib/runtime/object.h` and framework runtime |
+| Console drawing/timing | `psx-lib/`; generated application glue in `editor/game-main.h` |
 | Build orchestration | `editor/build.c` |
 
 Never implement a permanent feature by editing generated files under `build/`.
@@ -159,158 +159,76 @@ matches the walkable geometry.
 
 ## Commands and verification
 
-Run from `psx-studio/`. No installation is needed if dependencies are present.
-On Windows, follow the [Windows setup](../README.md#windows-11), then use
-`.\build.ps1` for the editor and `.\build.ps1 test` for host tests. To build a game:
-
-```powershell
-.\build.ps1 -Project examples/shadow-ops.psx -Psyq 'C:\SDK\psyq'
-```
-
-Windows editor objects use `build/windows/`
-to avoid reusing Linux objects. Windows builds also prepare the portable
-`build/windows/psx-studio/` folder. Editor packaging and PS1 builds do not
-require Python; Psy-Q and DOSBox remain external tools.
+Build and test the desktop editor:
 
 ```sh
 make
 make test
-# Focused existing test: exports the current Shadow Ops and runs its C89 harness.
-./build/tests -p /export/shadow-ops-example
-# Validate/export without GUI, SDK, emulator or a CD build.
-./build/psx-studio --export examples/shadow-ops.psx --output build/shadow-export
 ```
 
-Host tests cover project persistence/validation, asset import/export, audio,
-C89 runtime/camera math, input, timing, frame ownership, checkpoints and build
-preparation/validation. Pipeline tests need Python; production builds do not.
-Example tests skip when the separate archive is absent; report those skips.
-Host tests do not prove SDK compilation, emulator behavior or physical hardware.
-
-`tests/shadow_game.c` covers movement/aiming, cover, bullets, damage, pickups,
-guard kills, gates, extraction/restart and equivalent gameplay at different render
-cadences. Adapt scenario assertions when intentionally changing layouts/rules;
-do not delete coverage merely to make a redesigned map pass.
-
-Build with the existing SDK; provide its actual path rather than copying a
-machine-specific path into source. CLI overrides do not rewrite project settings:
+Export a project to a fresh standalone C source folder:
 
 ```sh
-./build/psx-studio --build-ps1 --project examples/shadow-ops.psx --psyq "$PSX_TASK_SDK"
-./build/psx-studio --build-ps1 --verify build/ps1/shadow-ops
+./build/psx-studio --export path/to/game.psx --output path/to/export
 ```
 
-The build command starts DOSBox and needs a display. Large campaigns can take
-several minutes to compile with Psy-Q; the native pipeline allows up to ten
-minutes for DOSBox before terminating a stalled build. For automated execution,
-run it with the isolated-display rules in spec.md. Output defaults to
-`build/ps1/PROJECT/`, using the sanitized `.psx` stem. Editor builds always use
-this location and expose no output setting. CLI `--output-root` and legacy custom
-`output_path` retain NAME-HASH subfolders; an existing fixed folder owned by a
-different project is rejected before its artifacts are invalidated. Find the actual path in the build output
-or `build/last-ps1-build.txt`, and check its project marker before using it.
-Console source/header filenames must remain DOS 8.3-compatible (for example,
-`card.c` and `save.h`); a host build does not catch long-name failures in Psy-Q.
-The CD is `cdrom/game.cue` plus `cdrom/GAME.ISO`; keep them together.
-`--verify` checks the PS-X EXE header and CD contents. It does not measure
-BSS/stack headroom; a successful verification must still be followed by an
-emulator boot check. Renderer object buffers are sized to the largest exported
-Scene, while ordering-table resolution stays fixed.
-`src/BUILD.LOG`, `dosbox.log` and `texture.log` hold build evidence.
-`build-info.json` records the SDK used; these ignored files may be absent in a
-fresh checkout. An empty `.psx` SDK field does not prevent a CLI override build.
-
-`--prepare-only` still requires an SDK, prepares/snapshots/exports sources and
-textures, and invalidates prior final outputs. It is not a read-only check.
-Use plain `--export` for validation that leaves the last playable CD alone.
-
-For an automated editor snapshot (Xvfb/xvfb-run must already be available):
+The exported application uses the engine's C89 API. Neither SDK nor engine is
+required for this export. Build through Studio using the included framework and an external SDK:
 
 ```sh
-xvfb-run -a -s "-screen 0 1280x1024x24" env -u WAYLAND_DISPLAY -u WAYLAND_SOCKET \
-  GDK_BACKEND=x11 SDL_VIDEODRIVER=x11 GSK_RENDERER=gl \
-  LIBGL_ALWAYS_SOFTWARE=1 GTK_A11Y=none GSETTINGS_BACKEND=memory \
-  DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/psx-studio-no-session-bus \
-  ./build/psx-studio --project examples/shadow-ops.psx \
-  --smoke-test build/shadow-preview.png
+./build/psx-studio --build-ps1 --project path/to/game.psx \
+  --psyq path/to/psyq
+./build/psx-studio --build-ps1 --project path/to/game.psx \
+  --psyq path/to/psyq --prepare-only
+./build/psx-studio --build-ps1 --verify path/to/output
 ```
 
-The smoke command saves a static preview and exits; it does not exercise
-interactive UI or gameplay. For editor changes, also check relevant selection,
-imports, camera controls, save/reopen and build messages. Inspect stderr as well
-as exit status; see the known limitations below.
+Studio locates the included PSX Lib automatically; there is no Settings field
+for it. Old `engine_path` and DOSBox executable overrides are ignored. SDK CLI
+overrides do not alter the saved project. DOSBox-X must be in PATH. The CLI
+`--engine FILE` remains an explicit development/test override; it is not required
+for normal use. Framework changes belong under `psx-lib/`, with its own C-only
+build and tests kept independent of Studio.
 
-For gameplay checks use `pcsxr -cdfile /actual/output/cdrom/game.cue` on an
-isolated display, with the same Wayland/X11 isolation and a disposable emulator
-profile (keep the user's BIOS/configuration intact). Exercise movement, aiming,
-firing, damage, pickups, camera follow, both directions of Scene travel and
-restart, including gates and loading/save prompts. Identify any debugger/RAM
-setup and distinguish it from a natural playthrough. Dummy audio checks do not
-verify the audible mix; checkpoint encoding tests do not verify memory-card I/O.
-For assisted RAM setups, wait for CD loading, neutral input and at least one
-actual gameplay step before repositioning the survivor into a portal: the new
-Scene ID can appear in RAM while loading is still blocking and entry triggers
-have not armed yet. Stop owned GUI/Xvfb processes afterward. Do not open the user's desktop
-or file manager for automated checks. For DOSBox Staging also use the temporary
-software-texture configuration described in spec.md and disable primary/local
-configuration loading; Xvfb alone is insufficient.
+Generated C is under `build/studio-projects/NAME-HASH/source/`; engine output is
+under `build/engine/ps1/NAME-HASH/`. Names include project-path hashes. The source
+workspace has its own lock and owner marker; the engine owns its output lock,
+SDK inputs, incremental objects and final verification. CLI `--output-root`
+continues to produce isolated hashed subfolders. Open `cdrom/game.cue` and keep
+it together with `cdrom/GAME.ISO`.
 
-FPS measures displayed images, not simulation updates. The shared engine services
-50 PAL simulation steps/s cooperatively while rendering from frozen snapshots;
-GPU/video polling stays nonblocking. Do not reintroduce a blocking VSync main loop
-or solve a graphical slowdown by slowing input/gameplay. Measure FPS during
-movement and combat after geometry or logic changes. It counts presented images,
-not input updates; historical emulator samples are not a guaranteed minimum.
-Use consistent emulator settings and avoid concurrent compilation when measuring
-FPS. `tools/prepare_shadow_benchmark.py` prepares a disposable Shadow Ops
-comparison copy. Enter through New Game and discard carried-over menu/Scene
-samples and the final stationary period. If console output is unavailable,
-inspect the existing `PsxFrameRate` counter through the emulator debugger.
+`make test` runs PSX Lib's standalone tests and Studio's editor/export/integration
+tests. `make test-lib` / `make test-studio` select either suite. Integration tests
+use `psx-lib/` by default; developer overrides `PSX_LIB_ROOT` and `PSX_LIB` can
+select a different framework source folder/executable for compatibility checks.
+Framework tests never discover the parent editor or sibling games. SDK compilation,
+CD verification and emulator performance need separate checks; preparation alone
+is not a console build.
 
-When the optional viewer is installed, open `examples/3d-viewer/index.html` with
-`file://` and networking disabled; check local OBJ/PNG import, playback and pose
-order after changing its code or embedded assets.
-
-Report commands, results, skips and limitations in the task or PR. Update these
-instructions only when procedures or known limitations change; do not append a
-development diary.
+On Linux run GUI/DOSBox/emulator checks using the isolated Xvfb environment from
+spec.md. Never use the user's emulator profile or primary DOSBox config.
 
 ### Known limitations
 
-- Shadow Ops industrial sectors do not sustain 30 FPS in the tested PCSX-R
-  setup; see the example guide for measurements. Direct-to-gameplay diagnostic
-  launches have stalled there, while the normal New Game path worked.
-- Alpine Ruins still has rendering slowdowns: a short PCSX-R movement check
-  observed approximately 8–19 presented FPS from the runtime counter. Scene
-  access and initial positioning were assisted through emulator RAM, so this is
-  not a natural campaign playthrough or a physical-console measurement. Fixed
-  simulation steps remain independent of the number of rendered images.
-- Last Ward's PCSX-R movement checks reported approximately 14–16 presented
-  FPS, including the inventory/key version. Turning in the pharmacy with four
-  active patients and its transparent counter layer measured approximately
-  14 FPS. The background is static in VRAM;
-  actor rendering still uses the ordinary 3D renderer; layered plates share its
-  approximate depth ordering. Controlled native combat,
-  key pickup, inventory and door checks repositioned actors through guest RAM;
-  they are not a natural full playthrough or a physical PS1 performance measurement.
-- Earlier Windows 11 packaging/ANGLE checks do not establish current interactive
-  GUI, SDK or emulator compatibility. Physical PS1 hardware and Windows 10 remain
-  unverified. Emulator FPS is not a physical-console performance guarantee.
+- Project JSON v1–v3 remains readable. Modules using the retired Studio HUD or
+  inventory structs must migrate to engine overlays and application-owned state.
+  The installed legacy Shadow Ops archive still needs that migration; its
+  gameplay integration test reports a skip while authoring checks remain active.
+- Resource packaging uses the engine's C asset-list interface with one resource
+  bank per Scene. Each bank has its own CD texture directory, preserving SDK
+  lookup for projects whose combined texture directory would span sectors.
+  Scene IDs are independent of resource-bank IDs. Standalone exports require
+  `--resources EXPORT/reslist.h --asset-root EXPORT/resources` when built directly
+  with the engine; Studio passes these automatically.
+- The viewport does not execute gameplay/animation modules or emulate PS1 GPU
+  ordering. Verify game behavior and performance on console/emulator.
+- This integration has host C89 and engine preparation coverage. Real SDK and
+  emulator verification require DOSBox-X; Windows packaging/execution requires
+  a dedicated Windows session.
 
 ## Starting another game
 
-Copy an appropriate example `.psx` **and** its data folder under a new matching
-stem, change the project name, then update all intended Scene/object/module
-contracts. `first-scene` is a smaller base for simple movement and map changes;
-Shadow Ops is a combat prototype with game-specific module assumptions, not a
-generic AI framework. Remove unused objects/assets only after checking references
-in every Scene and C module. Add focused behavior tests for new rules, validate
-all Scenes through export, and keep a short game-specific guide like
-`examples/shadow-ops.md`. Make reusable engine changes only when the game needs
-an actual capability missing from the current runtime/editor.
-
-Shadow Ops movement uses normalized digital/analog directions and Q8 residuals, so
-diagonals retain the same speed per simulation step as axial
-movement (subject to integer position rounding). Digital diagonal components
-use Q12 2896, avoiding a square root in its update loop. Built-in editor movement
-currently applies speed independently to each axis; it does not normalize diagonals.
+Create a new `.psx` with its own adjacent data folder. Keep gameplay, menus,
+inventories and animations in project C89 modules using engine public APIs.
+Use stable Scene/object IDs, low-poly assets and fixed-step integer arithmetic.
+Validate exports after authoring changes and keep a short game-specific guide.

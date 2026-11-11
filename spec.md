@@ -9,24 +9,41 @@
   precedence over documentation summaries.
 - The desktop editor is C11 with GTK4, JSON-GLib, Epoxy and libpng. Keep UI text
   and documentation in English, preserving the Windows 95/98 visual style.
-- `editor/build.c` implements the native PS1 build pipeline on Linux and Windows;
-  the UI and `build.sh` invoke the editor with `--build-ps1`. Keep shared build
-  behavior consistent across platforms, including locking and output validation.
+- This repository contains PSX Studio and the standalone `psx-lib/` framework.
+  One root `AGENTS.md` and this specification govern both; do not add nested
+  instruction/spec.md files. See [framework reference](spec/framework.md) for
+  C runtime, resource and SDK pipeline contracts.
+- `editor/build.c` exports application C89 and invokes included PSX Lib.
+  SDK compilation, resource-bank conversion, caching and CD verification belong
+  to `psx-lib/`. Never send .psx files to the framework. It supports only C source
+  applications and resource lists; do not restore document loading/game generation.
+- Keep framework code independent of GTK, Epoxy, the editor and sibling checkouts.
+  Host tools are C11 with GLib/GIO, JSON-GLib and libpng. Generated JSON manifests
+  and cache receipts are build metadata, not game authoring schemas.
 - Do not add a Python dependency to running, packaging or building games with
   PSX Studio. Python is only used by optional asset generators and developer
   pipeline tests. WAV-to-VAG and PNG-to-TIM conversion are native.
-- Keep Psy-Q, DOSBox, emulator and BIOS external and configurable. Do not
-  hardcode machine-specific paths or commit credentials, SDKs or generated
-  outputs. Standard game output is `build/ps1/PROJECT/`.
+- Psy-Q, DOSBox-X, emulator and BIOS remain external. Settings configures only
+  SDK and emulator; Studio locates its bundled psx-lib automatically. Ignore old
+  engine_path project settings. The CLI --engine override is for development.
+  PSX Lib resolves dosbox-x from PATH. Do not hardcode machine paths or commit
+  credentials, SDKs, generated output or BIOS. Preserve the current output paths:
+  `build/engine/ps1/NAME-HASH/` and `build/studio-projects/NAME-HASH/source/`.
 - `examples/` is ignored and distributed separately through GitHub Releases.
   It is not required to compile or run the editor. Keep generic tests independent
   of example assets; example integration tests must skip when unavailable.
-  Windows packages also exclude examples.
+  Windows packages also exclude game examples. `psx-lib/examples/c-starter/` is
+  a small tracked C starter independent of the optional game archive.
 
 ## Build and validation
 
 - Inspect the working tree before editing and preserve unrelated user changes.
-- On Linux, use `make` to build and `./build/psx-studio` to launch. On Windows,
+- `make` builds framework and editor; `make studio` / `make lib` build either.
+  `make -C psx-lib` and `make -C psx-lib test` must work independently, without
+  GTK or the parent project. Framework tests use self-contained fixtures and
+  never discover sibling games/editors. `make test` runs both suites;
+  `make test-studio` / `make test-lib` run them separately.
+- On Linux, use `./build/psx-studio` to launch. On Windows,
   use `.\build.ps1` with MSYS2 UCRT64; the distributable folder is
   `build/windows/psx-studio/`. Keep its libraries and resources together.
 - Use `make test` on Linux or `.\build.ps1 test` on Windows for host tests;
@@ -59,10 +76,9 @@
 - Do not introduce `float`, `double`, floating-point literals or calls to floating-
   point math functions into console execution paths. The PS1 CPU has no FPU;
   software floating-point operations are too costly for frame rendering.
-- Keep the shared camera module's existing floating-point helpers limited to the
-  desktop editor and host reference tests. The console must call its integer /
-  fixed-point APIs. Prefer a separate console implementation over converting
-  between integers and floating-point values inside the frame loop.
+- `editor/camera.c` contains desktop-only floating-point viewport helpers.
+  Console arithmetic and rendering belong to psx-lib; generated
+  application code and modules must use its integer/fixed-point APIs.
 - Document each fixed-point format. Existing runtime scales and camera zoom use
   4096 = 1.0; runtime rotations use 4096 units per turn. Check intermediate
   arithmetic for overflow on the PS1's 32-bit `long`, not just the host's type.

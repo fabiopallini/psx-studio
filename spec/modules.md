@@ -86,7 +86,7 @@ movement (Shadow Ops does); that does not change built-in movement behavior.
 
 ## Objects, scenes and collisions
 
-See [runtime/object.h](../runtime/object.h) for the full interface. `PsxScene`
+See [`psx-lib/runtime/object.h`](../psx-lib/runtime/object.h) for the full interface. `PsxScene`
 contains the object array and count, camera and `projection` mode (0 orthographic,
 1 perspective). Object IDs retain their project values. `position` and
 `half_size` use integer world units; `rotation` uses 4096 units per turn and
@@ -205,20 +205,27 @@ normally, but the console skips drawing it. Unlike killing an object, this does
 not remove its collider. The editor does not execute module flags, so its editing
 view still displays the object's wireframe for authoring.
 
-## Optional gameplay HUD
+## Application overlays
 
-A module can enable `scene->hud.enabled` and set `health`, `max_health`, `ammo`
-and `message` in `scene->hud`. The standard game loop then draws an HP bar across
-the top overlay, ammunition, FPS and the message instead of the diagnostic scene
-summary. The bar clamps health and supports maximum health up to 32767. Keep
-message lines short (roughly 36 characters) and the source string alive until
-replaced; static string literals or module-owned buffers are suitable. Each
-render snapshot copies at most `PSX_HUD_MESSAGE_SIZE - 1` (511) bytes into its
-own `message_text` storage, so later menu edits cannot change a frame in flight. Zero-initialized/disabled HUDs preserve the existing
-overlay for older examples. Scene loads reset HUD state, so initialize it in your
-module's init callback. The editor does not execute gameplay modules or draw this
-runtime HUD in its preview. The optional Shadow Ops example demonstrates
-shooting, enemies, supplies, health, death/restart and extraction.
+Health, ammo, menus and inventory state belong to game modules. There are no
+`scene->hud`, `scene->inventory` or `PSX_HUD_*` interfaces in PSX Lib.
+Assign `scene->prepare_overlay` from an init callback and use the generic engine
+commands to build an overlay. Keep simulation changes in update callbacks.
+
+```c
+static void overlay(PsxScene *scene)
+{
+    psx_overlay_clear(scene);
+    psx_overlay_rect(scene,8,8,80,8,180,30,30);
+    psx_overlay_text(scene,"MY GAME");
+}
+/* In an object's init callback: scene->prepare_overlay = overlay; */
+```
+
+The engine freezes overlay commands/text with each render snapshot. The Studio
+viewport does not execute modules or preview their overlay. Reinitialize callbacks
+and game state on Scene load. See PSX Lib's public headers for
+capacity and parameter contracts.
 
 ### Flat ground ordering
 
@@ -234,53 +241,29 @@ Enable it only for meshes with consistent winding (as on Shadow Ops walls).
 Sprites and other meshes stay two-sided by default. Near-plane crossings and
 very wide projected edges conservatively bypass this rejection.
 
-## HUD styles and sector checkpoints
+## Checkpoints and loading captions
 
-`scene->hud.style` defaults to 0 (existing diagnostic/game HUD).
-`PSX_HUD_HEALTH_ONLY` shows only the HP bar. `PSX_HUD_COMBAT` shows compact HP,
-a pistol icon with a cyan frame and tiny ammunition digits.
-`PSX_HUD_COMBAT_MESSAGE` adds the same opaque message balloon as menu style
-while retaining the HP bar and ammunition display; it uses independent GPU
-packets so the message cannot overwrite the combat primitives.
-`PSX_HUD_INVENTORY` draws a compact six-slot graphic panel (three columns, two
-rows) with its own small energy gauge and ammo-slot count. Set
-`scene->inventory.icons[0..5]` to 0 empty, 1 handgun, 2 ammo or 3 key, and
-`scene->inventory.selected` to the selected slot. `runtime/icons.h` defines the
-32x20 native pixel silhouettes and palette. The renderer uses GPU color runs and
-beveled slot frames, not font-drawn boxes; no texture slot or per-frame image
-upload is needed. The panel is `(48,40,224,184)` in the 320x256 framebuffer.
-Set `hud.message` for the header at font row 6, selected title at row 19,
-one-line description at row 22 and footer at row 25, leaving room between lines.
-Keep description/footer widths within the panel (about 25 characters). Icon IDs
-and selection are copied by value with every render snapshot. Modules own
-inventory contents, navigation and pausing.
-`PSX_HUD_MENU` hides the bar and
-prints `hud.message` as a multiline menu/prompt inside an opaque dark panel
-with a light border. The panel follows the visible text bounds in the 38×28
-font grid, keeping prompts readable over bright scenery. Keep text within the
-511-byte snapshot limit, 38 columns and 28 rows. Modules own menu input and pausing.
-Health-only and combat styles suppress diagnostic text and the FPS overlay;
-style 0 retains the standard text/status display.
+The engine checkpoint service uses an application-owned card namespace. Set
+`scene->checkpoint.file` and `title`, a positive application checkpoint ID in
+`scene_id`, and request `PSX_CHECKPOINT_SAVE` or `PSX_CHECKPOINT_LOAD` through
+`operation`. The engine performs I/O at a safe loading boundary and returns
+`status` 1/-1. The application validates/maps the returned ID to a Studio Scene
+and calls `psx_scene_request_change`. This is not an object/inventory serializer;
+old example save formats require application-owned migration.
 
-The initial checkpoint backend is for Shadow Ops sector starts: set
-`scene->checkpoint.operation` to `PSX_CHECKPOINT_SAVE` with stable sector code `scene_id` 1–5 (yard through Alpine Ruins),
-independent of their current Scene IDs; the game maps these to Scenes 2–6.
-Use `PSX_CHECKPOINT_LOAD` to read a checkpoint. The original codes 1/2 retain
-their meaning and existing cards remain valid. The console handles requests at GPU idle in the
-main thread, clears operation and returns status 1/-1; a successful load supplies
-the stored Scene ID. The module validates it and requests a normal Scene change.
-BIOS card I/O is a deliberate pause; the engine resets timing and waits for input
-release afterward. Do not issue requests while gameplay should continue.
-This is not a generic object/inventory serializer. Host tests simulate completions.
-The card backend uses one block in slot 1, a standard header/icon and a versioned,
-CRC-checked payload; it never formats a card or deletes unrelated saves.
+`scene->loading` optionally supplies a static caption for a pending transition.
+The generated application calls `psShowLoading` before destination loading;
+ordinary callbacks must not perform GPU waits or direct loading-screen calls.
 
-`hud.loading` optionally supplies a static string for a pending Scene transition.
-The main loop calls `psShowLoading` before destination init/resource loading. This
-function publishes a completed loading image and may wait for GPU/VBlank only at
-that explicit I/O boundary. It is not for ordinary callbacks or frame rendering.
-Card I/O similarly publishes a saving/reading screen first and is deferred until
-no CPU frame is being built, avoiding reuse of packets/framebuffers under the GPU.
+## Rigid-part animation
+
+Use engine mesh swaps, object transforms and public Q12 rotation APIs directly.
+`psx_object_rotation(scene, object)` returns a `PsxObjectRotation *` whose `m[9]`
+contains a row-major signed-short Q12 matrix. Its registered slot is stored in
+the upper `render_flags` bits, so preserve those bits when changing low flags.
+The engine snapshots the matrix bank and handles renderer/GTE caches; Studio
+does not maintain an animation backend. Never mutate mesh vertices in flight,
+and ensure replacement poses fit the object's allocated vertex capacity.
 
 ## Sample audio
 

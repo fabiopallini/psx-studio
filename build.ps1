@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('build', 'run', 'test', 'clean')]
+    [ValidateSet('build', 'run', 'test', 'clean', 'studio', 'lib', 'test-studio', 'test-lib')]
     [string]$Target = 'build',
     [string]$Msys2 = 'C:\msys64',
     [string]$Project,
