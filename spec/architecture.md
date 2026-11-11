@@ -14,7 +14,7 @@ does not ship a second console runtime, SDK backend or DOSBox launcher.
 | `editor/game-main.h` | Embedded application entry point using engine public APIs |
 | `editor/build.c` | Generated-source ownership/locking and included framework invocation |
 | `tests/` | Editor, export and engine-boundary checks |
-| `tools/` | Windows packaging and optional developer asset generators |
+| `tools/` | Windows build, packaging and graphics verification |
 
 The editor is C11 with GTK4, JSON-GLib, Epoxy and libpng. Generated game code and
 modules are strict ANSI C89. Python is only an optional developer-test/asset-tool

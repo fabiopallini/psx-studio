@@ -102,8 +102,8 @@ regenerate its gunshot and looping background track through the native importer:
 
 ```sh
 make
-python3 tools/generate_shadow_audio.py
-python3 tools/generate_shadow_music.py
+python3 examples/shadow-ops_tools/generate_shadow_audio.py
+python3 examples/shadow-ops_tools/generate_shadow_music.py
 ```
 
 They modify example assets and are not part of the editor or game build pipeline.

@@ -183,7 +183,8 @@ The optional **examples ZIP** on GitHub Releases contains **Shadow Ops**
 (`shadow-ops.psx`), a tactical shooter, and **Sanitarium** (`sanitarium.psx`),
 a fixed-camera horror demo with pre-rendered backgrounds and depth layers.
 Extract it into the repository folder and open a project with **File → Open**.
-Keep each `.psx` with its data folder. These projects are distributed separately
+Keep each `.psx` with its data folder. Shadow Ops asset generators, benchmark
+preparation and art sources are included in `examples/shadow-ops_tools/`. These projects are distributed separately
 and are not required to build the tools; the C starter is included in the source.
 
 Detailed documentation:

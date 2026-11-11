@@ -139,7 +139,7 @@ Use [modules.md](modules.md) for console APIs, [audio.md](audio.md) for sound an
 [textures.md](textures.md) for UV/conversion rules. Keep game-specific rules in
 the release's game guide rather than duplicating them across engine documentation.
 
-The optional `tools/generate_shadow_village.py` regenerates the integrated
+The optional `examples/shadow-ops_tools/generate_shadow_village.py` regenerates the integrated
 mountain village in Scene 6 of the installed Shadow Ops example. It requires
 Pillow only for desktop asset generation and replaces generated village scenery
 and placements; preserve manual Scene 6 edits before running it. It also places
