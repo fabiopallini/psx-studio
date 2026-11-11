@@ -143,8 +143,9 @@ The optional `examples/shadow-ops_tools/generate_shadow_village.py` regenerates 
 mountain village in Scene 6 of the installed Shadow Ops example. It requires
 Pillow only for desktop asset generation and replaces generated village scenery
 and placements; preserve manual Scene 6 edits before running it. It also places
-manual checkpoints beside every campaign exit. The campaign and village checks
-share `/export/shadow-ops-example`; no separate prototype project is required.
+manual checkpoints beside every campaign exit. Its legacy gameplay harness and authoring checks are preserved in
+`examples/shadow-ops_tests/`; they require a separate driver and gameplay API
+migration before being enabled. No separate prototype project is required.
 Menu-style HUD messages have an opaque bordered panel sized to their visible
 text, including checkpoint confirmations and errors.
 
@@ -227,10 +228,10 @@ preparation and decodes compiler output from CP437 to UTF-8 for the editor.
 - Project JSON v1–v3 remains readable. Modules using the retired Studio HUD or
   inventory structs must migrate to engine overlays and application-owned state.
   The installed legacy Shadow Ops archive still needs that migration; its
-  gameplay integration test reports a skip while authoring checks remain active.
+  legacy checks are archived with the example and are not enabled in the host suite.
   Sanitarium owns its menu, combat HUD, inventory and campaign state in its C
   modules, using the generic overlay callback. Its optional
-  `/export/sanitarium-gameplay` test compiles the exported C89 and exercises
+  `/export/example-gameplay` test compiles the exported C89 and exercises
   inventory pause, shooting, room persistence, death and restart.
 - Resource packaging uses the engine's C asset-list interface with one resource
   bank per Scene. Each bank has its own CD texture directory, preserving SDK
@@ -250,3 +251,8 @@ Create a new `.psx` with its own adjacent data folder. Keep gameplay, menus,
 inventories and animations in project C89 modules using engine public APIs.
 Use stable Scene/object IDs, low-poly assets and fixed-step integer arithmetic.
 Validate exports after authoring changes and keep a short game-specific guide.
+
+Optional example gameplay harnesses live in `examples/NAME_tests/gameplay.c`
+beside `examples/NAME.psx`. The generic `/export/example-gameplay` runner
+exports and compiles each installed harness as C89; it skips when none are
+installed. Game-specific assertions and fixtures belong in the example archive.

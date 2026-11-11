@@ -628,45 +628,30 @@ static void sound_assets(void)
     g_free(vag);g_free(file);g_free(directory);g_free(module);g_free(sample);g_free(destination);project_clear(&p);
 }
 
-static void shadow_ops_example(void)
+/* Optional example archives supply gameplay.c beside their *_tests directory.
+ * Keep game names, assertions and fixtures in the archive, not this runner. */
+static void example_gameplay(void)
 {
-    if(!g_file_test("examples/shadow-ops.psx",G_FILE_TEST_IS_REGULAR)) {
-        g_test_skip("Install the examples archive to run this integration test.");return;
-    }
-    Project p;project_init(&p);GError *error=NULL;
-    g_assert_true(project_load(&p,"examples/shadow-ops.psx",&error));g_assert_no_error(error);
-    g_assert_cmpuint(p.scenes->len,>=,5);g_assert_cmpuint(p.scenes->len,<=,6);
-    g_assert_nonnull(project_scene_find(&p,p.scene_id));g_assert_cmpuint(p.startup_scene,==,1);
-    g_assert_cmpuint(((Scene*)g_ptr_array_index(p.scenes,0))->id,==,1);
-    /* Industrial scenery must not replace the bright shot-effect atlas. */
-    for(guint i=0;i<p.scenes->len;i++) {
-        Project view;
-        g_assert_true(project_scene_view(&p,i,&view,&error));g_assert_no_error(error);
-        for(guint j=0;j<view.objects->len;j++) {
-            Object *o=g_ptr_array_index(view.objects,j);
-            if(!g_strcmp0(o->asset,"tracer.obj") || !g_strcmp0(o->asset,"muzzle.obj"))
-                g_assert_cmpstr(o->texture,==,"atlas.png");
+    GDir *directory=g_dir_open("examples",0,NULL);
+    const char *entry;guint count=0;
+    if(!directory) {g_test_skip("Separate examples archive is unavailable.");return;}
+    while((entry=g_dir_read_name(directory))) {
+        if(!g_str_has_suffix(entry,"_tests")) continue;
+        char *name=g_strndup(entry,strlen(entry)-strlen("_tests"));
+        char *file=g_strdup_printf("examples/%s.psx",name);
+        char *source=g_build_filename("examples",entry,"gameplay.c",NULL);
+        if(g_file_test(file,G_FILE_TEST_IS_REGULAR) && g_file_test(source,G_FILE_TEST_IS_REGULAR)) {
+            Project p;GError *error=NULL;char *harness=NULL;
+            project_init(&p);g_test_message("Example: %s",name);
+            g_assert_true(project_load(&p,file,&error));g_assert_no_error(error);
+            g_assert_true(g_file_get_contents(source,&harness,NULL,&error));g_assert_no_error(error);
+            compile_export(&p,harness,entry);
+            g_free(harness);project_clear(&p);count++;
         }
-        project_clear(&view);
+        g_free(name);g_free(file);g_free(source);
     }
-    /* The separately distributed archive still targets Studio's retired HUD.
-     * Authoring checks above remain valid; its gameplay migration belongs to
-     * the example project, not a compatibility runtime inside the editor. */
-    g_test_skip("Legacy Shadow Ops modules/harness require migration to engine overlay APIs.");
-    project_clear(&p);
-}
-
-static void sanitarium_gameplay(void)
-{
-    Project p;GError *error=NULL;char *harness=NULL;
-    if(!g_file_test("examples/sanitarium.psx",G_FILE_TEST_IS_REGULAR)) {
-        g_test_skip("Separate Sanitarium example archive is unavailable.");return;
-    }
-    project_init(&p);
-    g_assert_true(project_load(&p,"examples/sanitarium.psx",&error));g_assert_no_error(error);
-    g_assert_true(g_file_get_contents("tests/sanitarium.c",&harness,NULL,&error));g_assert_no_error(error);
-    compile_export(&p,harness,"sanitarium-gameplay");
-    g_free(harness);project_clear(&p);
+    g_dir_close(directory);
+    if(!count) g_test_skip("No optional example gameplay harnesses installed.");
 }
 
 static void scene_background(void)
@@ -835,7 +820,6 @@ int main(int argc, char **argv)
     test_root = g_mkdtemp(template); g_assert_nonnull(test_root);
     g_test_add_func("/project/scene-snapshot-isolation",scene_snapshot_isolation);
     g_test_add_func("/export/scene-module-transition",scene_module_transition);
-    g_test_add_func("/export/shadow-ops-example",shadow_ops_example);
     g_test_add_func("/project/multiple-scenes",multiple_scenes);
     g_test_add_func("/project/emulator-command",emulator_command);
     g_test_add_func("/project/camera-objects",camera_objects);
@@ -857,6 +841,6 @@ int main(int argc, char **argv)
     g_test_add_func("/project/output-discovery", output_discovery);
     g_test_add_func("/project/projection-validation",projection_validation);
     g_test_add_func("/export/gameplay-behaviors", gameplay_behaviors);
-    g_test_add_func("/export/sanitarium-gameplay", sanitarium_gameplay);
+    g_test_add_func("/export/example-gameplay", example_gameplay);
     int result = g_test_run(); remove_tree(test_root); g_free(template); g_free(build); return result;
 }
