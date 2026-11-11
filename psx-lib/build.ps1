@@ -2,7 +2,7 @@
 param([string]$Msys2 = 'C:\msys64', [switch]$Test)
 $ErrorActionPreference = 'Stop'
 $bash = Join-Path $Msys2 'usr\bin\bash.exe'
-if (!(Test-Path -LiteralPath $bash)) { throw 'MSYS2 UCRT64 is required; see README.md.' }
+if (!(Test-Path -LiteralPath $bash)) { throw 'MSYS2 UCRT64 is required; see ../README.md.' }
 $previous = @{}
 foreach ($name in @('MSYSTEM','CHERE_INVOKING','PSX_LIB_ROOT','PSX_LIB_TARGET')) { $previous[$name] = [Environment]::GetEnvironmentVariable($name,'Process') }
 try {

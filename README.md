@@ -1,210 +1,194 @@
 # PSX Studio
 
-PSX Studio is a small editor for creating original PlayStation games on Linux
-and Windows 11. It has a Windows 95/98-style interface, a 3D preview and a C89 exporter that builds PS1 CD images through the included PSX Lib framework.
+Tools for creating original PlayStation games on Linux and Windows 11:
 
-Create levels, import low-poly OBJ models and PNG textures, add cameras and
-collisions, and write custom gameplay in ANSI C89. WAV audio can be imported
-and converted directly to the PlayStation VAG format.
+- **PSX Studio** is a visual editor with a Windows 95/98-style interface, a 3D
+  preview, scenes, cameras, collisions and asset import. It exports `.psx`
+  projects to ANSI C89 applications.
+- **PSX Lib** is the included C89 framework and native build tool. It provides
+  rendering, rigid-part animation transforms, input, audio, collision helpers,
+  fixed-step updates, resource conversion and PS1 CD builds. It can also be used
+  independently, with games written directly in C.
 
-![PSX Studio editing the Shadow Ops level in the 3D viewport](screenshots/screenshot.png)
+Studio uses PSX Lib for game builds. The framework accepts C sources and resource
+lists; it does not read `.psx` files or generate gameplay.
 
-![PSX Studio editing Sanitarium with a pre-rendered background and 3D characters](screenshots/screenshot2.png)
+![Shadow Ops in the 3D editor](screenshots/screenshot.png)
 
-## Getting started
+![Sanitarium with a pre-rendered background and 3D actors](screenshots/screenshot2.png)
 
-1. Create a project and save it as a `.psx` file.
-2. Add objects, import assets and arrange your level in the 3D view.
-3. Set up collisions, a game camera and any custom C modules.
-4. Open **File → Settings** and select your Psy-Q SDK folder and configure an emulator if desired.
-5. Choose **Build → Build**, then **Run emulator** to play.
+## Requirements
 
-A Scene can also use a pre-rendered PNG background: choose **Background...** in
-the **Background** tab on the right, then align a fixed 3D camera with the image. Actors and
-collisions continue to use the normal 3D runtime. Use **Add layer...** for
-transparent foreground PNGs and set **Layer depth** to let actors pass behind
-painted counters or pillars.
+To build PS1 games, supply your own **Psy-Q SDK** and put **dosbox-x** in `PATH`.
+The SDK folder must contain `psyq/CCPSX.EXE`, `psyq/PSYMAKE.EXE`, `include/` and
+`lib/`. An emulator and BIOS are external too. Keep PSX Lib's runtime and build
+resources with its executable.
 
-The editor view supports perspective and orthographic views. Right-drag to orbit,
-scroll to zoom, Shift + scroll to move sideways, and Ctrl + scroll to move
-along the Y axis. Select objects to edit
-properties in the tabs on the right. Clicking a model selects its surface;
-overlapping objects select the nearest surface, and transparent sprite pixels
-let clicks through. Use Scenes to create multiple levels.
+**Python is not required to run Studio, convert assets or build games.** It is
+used only by developer tests and optional asset-generation tools.
 
-Keep `MyGame.psx` and its `MyGame_psx_data/` folder together: the folder contains
-its models, textures, audio and C modules.
-
-## What you need
-
-**PSX Lib is included in `psx-lib/`** and Studio finds it automatically. Supply
-your own **Psy-Q SDK** and put **dosbox-x** in the system `PATH`. There is no
-framework path setting. Running `make` builds both components; `make lib` builds
-only the headless framework. Keep the framework runtime/build resources with
-its executable when distributing it.
-
-Select the SDK folder containing `psyq/CCPSX.EXE`, `psyq/PSYMAKE.EXE`, `include/`
-and `lib/`. Studio passes this path to the engine; the engine owns SDK use,
-DOSBox-X configuration, compilation, caching and CD verification.
-An emulator is optional and can be configured in Settings, for example:
-
-```text
-pcsxr -cdfile {cue}
-```
-
-The SDK, DOSBox-X, emulator and BIOS are not included. **Python is not needed to
-run PSX Studio or build games.** It is only used by development asset generators
-and some automated tests.
-
-Generated C projects are written to `build/studio-projects/NAME-HASH/source/`.
-Build results are written to `build/engine/ps1/NAME-HASH/`. Open `cdrom/game.cue` in your
-emulator and keep it together with `cdrom/GAME.ISO`.
-
-## Editor and framework boundary
-
-Studio owns `.psx` authoring, scene/object/collision definitions, native asset
-conversion, and C89 application generation. It passes generated C, a C resource list and snapshotted assets
-to PSX Lib's direct-C interface. The engine never receives a `.psx` file.
-Rendering, rigid-part animation transforms, simulation, sound, input and console
-backends come from the included framework; Studio has no second PS1 runtime.
-C modules include the engine's public headers, such as `object.h`.
-
-Export a standalone C project without running the SDK:
-
-```sh
-./build/psx-studio --export path/to/game.psx --output path/to/export
-./psx-lib/build/psx-lib --build-ps1 --source-root path/to/export --name my-game \
-  --build-directory path/to/game-build --max-objects 512 --render-triangles 8192 \
-  --resources path/to/export/reslist.h --asset-root path/to/export/resources \
-  --psyq path/to/psyq
-```
-
-Choose an empty export folder; subsequent exports prune only files recorded as
-Studio-owned. `assets.json` records the actual largest Scene object count, which
-Studio passes automatically during normal builds. The conservative 512 above
-also works for manual builds.
-
-The format remains version 3. Old projects load, but C modules using the former
-Studio HUD/inventory fields must migrate to engine overlay APIs. See
-[modules](spec/modules.md) and [validation and limitations](spec/game-development.md).
-
-## Build the editor
-
-The root Makefile coordinates two independent components:
-
-| Command | Action |
-| --- | --- |
-| `make` | Build PSX Lib and Studio |
-| `make studio` | Build the editor only |
-| `make lib` | Build PSX Lib only; no GTK required |
-| `make test` | Run framework and editor/integration tests |
-| `make test-studio` / `make test-lib` | Run either suite |
-| `make clean` | Clean both generated build folders |
-| `make -C psx-lib` | Build the framework independently |
-
-For C-only development, start with [psx-lib/examples/c-starter](psx-lib/examples/c-starter).
-The folder `psx-lib/` can be copied and built on its own. Its Makefile, runtime,
-resource converters and SDK pipeline do not require the editor or parent Makefile.
-Read [PSX Lib usage](psx-lib/README.md) and the [framework reference](spec/framework.md).
-Development instructions live in one root `AGENTS.md` and `spec.md`.
+## Build the tools
 
 ### Linux
 
-Install a C11 compiler, Make, pkg-config, GTK 4.12 or newer, JSON-GLib, libepoxy
-and libpng development packages. The preview requires OpenGL 3.2 or OpenGL ES 3.0.
+Both components need a C11 compiler, Make, pkg-config, GLib/GIO, JSON-GLib and
+libpng. The editor additionally needs GTK 4.12+, libepoxy and OpenGL 3.2 or
+OpenGL ES 3.0.
 
-**Ubuntu 24.04 or newer:**
+Ubuntu 24.04+:
 
 ```sh
-sudo apt update
 sudo apt install build-essential pkg-config libgtk-4-dev libjson-glib-dev libepoxy-dev libpng-dev
 ```
 
-**Fedora:**
+Fedora:
 
 ```sh
 sudo dnf install gcc make pkgconf-pkg-config gtk4-devel json-glib-devel libepoxy-devel libpng-devel
 ```
 
-Then, from the project folder:
+Then build and launch:
 
 ```sh
 make
 ./build/psx-studio
 ```
 
+For PSX Lib alone, GTK and OpenGL are unnecessary. On Debian/Ubuntu install
+`build-essential pkg-config libglib2.0-dev libjson-glib-dev libpng-dev`, then run
+`make lib`. Its executable is `psx-lib/build/psx-lib`.
+
 ### Windows 11
 
-Install [MSYS2](https://www.msys2.org/) and update it with `pacman -Syu` in the
-**UCRT64** terminal. Reopen the terminal and repeat if prompted. Install:
+Install [MSYS2](https://www.msys2.org/), update it with `pacman -Syu`, then install
+these packages in its **UCRT64** terminal:
 
 ```sh
-pacman -S --needed make mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-gtk4 mingw-w64-ucrt-x86_64-json-glib mingw-w64-ucrt-x86_64-libepoxy mingw-w64-ucrt-x86_64-libpng mingw-w64-ucrt-x86_64-angleproject
+pacman -S --needed make mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-pkgconf \
+  mingw-w64-ucrt-x86_64-gtk4 mingw-w64-ucrt-x86_64-json-glib \
+  mingw-w64-ucrt-x86_64-libepoxy mingw-w64-ucrt-x86_64-libpng \
+  mingw-w64-ucrt-x86_64-angleproject
 ```
 
-Then, from PowerShell in the project folder:
-
-```powershell
-.\build.ps1
-```
-
-If script execution is blocked, run
+From PowerShell in the repository folder, run `.\build.ps1`. Use
+`-Msys2 'D:\msys64'` for a different MSYS2 location. If needed, launch it with
 `powershell -ExecutionPolicy Bypass -File .\build.ps1`.
-Use `-Msys2 'D:\msys64'` if MSYS2 is installed somewhere other than `C:\msys64`.
 
-The distributable folder is `build/windows/psx-studio/`. Run the executable inside
-it and keep the entire folder together, including `psx-lib.exe` and the
-`psx-lib/` runtime/build resources. It includes the required libraries;
-recipients do not need MSYS2 or Python. Keep personal projects outside this
-folder, as rebuilding replaces it.
+The distributable is `build/windows/psx-studio/`. Keep the whole folder together,
+including `psx-lib.exe`, DLLs and `psx-lib/` resources. Recipients do not need
+MSYS2 or Python. Keep personal projects outside this generated package folder.
 
-On Windows, double-clicking `psx-studio.exe` opens the editor without a console
-window. The package includes GLib's `gdbus.exe` session helper beside its DLLs.
-Command-line output remains available when captured by scripts and the build log.
+For the framework alone, run `.\build.ps1 lib`. It needs only Make, GCC,
+pkgconf, GLib, JSON-GLib and libpng from MSYS2 UCRT64; no GTK or ANGLE.
+Its executable is `psx-lib/build/psx-lib.exe`.
 
-## Examples
+### Build targets
 
-Example projects are distributed separately in the **examples ZIP** attached to
-this repository's **GitHub Releases**, rather than in the source repository:
+| Command | Action |
+| --- | --- |
+| `make` | Build Studio and PSX Lib |
+| `make studio` / `make lib` | Build either component |
+| `make test` | Run both test suites; requires Python |
+| `make test-studio` / `make test-lib` | Run either suite |
+| `make clean` | Clean both generated build folders |
+| `make -C psx-lib` | Build the framework independently |
+| `make -C psx-lib test` | Test the framework independently |
 
-- **Shadow Ops** (`shadow-ops.psx`): a tactical shooter with enemies, shooting,
-  pickups, gated passages and manual memory-card checkpoints.
-- **Sanitarium** (`sanitarium.psx`): an original fixed-camera sanitarium demo with
-  pre-rendered backgrounds, an armed 3D survivor, five connected rooms with
-  different fixed camera angles, twenty zombies and pixel-art blood impacts. A compact graphical inventory carries a
-  glinting Sprite3D counter key used to unlock the ward. Press Cross at editable
-  door triggers to travel
-  between rooms while preserving inventory, health, ammunition and defeated enemies.
-  Surviving enemies restart at their spawn points when an area is revisited.
-  Ammo Sprite3Ds are scattered through the rooms, and the pharmacy demonstrates
-  a transparent counter layer that occludes actors at the correct depth.
+On Windows, `.\build.ps1 test`, `test-studio` and `test-lib` select the same
+suites. The `psx-lib/` source folder can also be copied and built on its own;
+its build and tests do not require the editor or parent Makefile.
 
-Download and extract the ZIP, then use **File → Open** in PSX Studio to select
-a `.psx` project. Keep each project's accompanying `*_psx_data/` folder
-and guide with it. Extracting into the repository folder restores `examples/`
-for the example commands and integration tests in the development guides.
+## Create a game with Studio
 
-## Documentation and development
+1. Create a project and save it as a `.psx` file.
+2. Import low-poly OBJ models, PNG textures and WAV audio; arrange your objects.
+3. Add collisions, cameras and any custom C89 gameplay modules.
+4. In **File → Settings**, select the Psy-Q SDK and optionally an emulator command,
+   such as `pcsxr -cdfile {cue}`. PSX Lib is found automatically.
+5. Choose **Build → Build**, then **Run emulator**.
 
-The README covers the basics. More detailed guides live in `spec/`:
+Keep `MyGame.psx` and `MyGame_psx_data/` together. Use Scenes for multiple levels.
+The **Background** tab supports a pre-rendered PNG and transparent foreground
+layers with camera-space depth; author their physical collision volumes separately.
 
-- [Game development](spec/game-development.md): projects, Scenes, development workflow and verification.
-- [C89 modules](spec/modules.md): custom gameplay and runtime APIs.
-- [Audio](spec/audio.md) and [textures](spec/textures.md): supported formats and conversion.
-- [Architecture](spec/architecture.md): how the editor, exporter and runtime fit together.
+Right-drag to orbit, scroll to zoom, Shift + scroll to move sideways and
+Ctrl + scroll to move along Y. The preview helps author scenes but does not
+execute C modules or reproduce PS1 rendering exactly.
 
-`editor/` contains the desktop application and C89 exporter. PS1 runtime and
-build resources belong to `psx-lib/`. Keep models low poly and check performance
-in an emulator. The preview is a guide, not a precise emulation of PS1 rendering.
+Generated C lives in `build/studio-projects/NAME-HASH/source/`; game output is
+`build/engine/ps1/NAME-HASH/`. Open `cdrom/game.cue` in your emulator and keep it
+with `cdrom/GAME.ISO`.
 
-Run `make test` on Linux or `.\build.ps1 test` on Windows for developer checks
-(Python is required for these). Tests that use example projects are skipped when
-the examples archive is not installed.
-
-For a command-line game build, compile the editor first, then run:
+The same game build is available without opening the UI:
 
 ```sh
-./build/psx-studio --build-ps1 --project /path/to/MyGame.psx --psyq /path/to/psyq
+./build/psx-studio --build-ps1 --project path/to/game.psx --psyq path/to/psyq
 ```
 
-On Windows, use `psx-studio.exe --build-ps1` with the same options.
+To export only, use `--export path/to/game.psx --output path/to/export`. Choose
+an empty destination initially; later exports prune obsolete Studio-owned files.
+The project format remains version 3. Older gameplay modules using retired
+HUD/inventory fields need migration to the framework's overlay APIs; see
+[compatibility and validation](spec/game-development.md#known-limitations).
+
+## Create a game directly in C
+
+Start with [psx-lib/examples/c-starter](psx-lib/examples/c-starter). Your application
+owns `main.c`, objects, cameras, gameplay, overlays and scene loading. Include
+`object.h` for runtime APIs and `psx.h` for console services.
+
+After building PSX Lib, compile your game:
+
+```sh
+./psx-lib/build/psx-lib --build-ps1 --source-root path/to/game \
+  --psyq path/to/psyq --build-directory path/to/game/build --name my-game \
+  --max-objects 64 --render-triangles 1024
+```
+
+Use unique, flat DOS 8.3 C/header filenames. Additional `.c` units are linked
+automatically. Set object and triangle capacities for your game, then verify
+memory usage and performance in an emulator. Runtime code is strict C89 and
+uses integer/fixed-point arithmetic at 50 simulation steps per second.
+
+For OBJ/PNG/VAG conversion during a build, add `--resources path/to/reslist.h`
+and `--asset-root path/to/assets`. The C asset list describes resource banks,
+not gameplay scenes. Preconverted 16-bit TIM files can also be supplied directly.
+Studio exports include `reslist.h` and `resources/`; pass those with the same
+options when building an exported project yourself.
+
+Standalone asset conversion, WAV import and output verification are available too:
+
+```sh
+./psx-lib/build/psx-lib --resources path/to/reslist.h \
+  --asset-root path/to/assets --output path/to/resource-export
+./psx-lib/build/psx-lib --import-wav effect.wav --audio-directory path/to/assets
+./psx-lib/build/psx-lib --build-ps1 --verify path/to/game/build/ps1/my-game
+```
+
+`--prepare-only` prepares a game build without starting DOSBox-X and invalidates
+previous final artifacts. Standalone resource conversion checks assets without
+touching a playable CD. Successful builds retain a content-hashed object cache;
+later builds compile changed units, then relink, package and verify the CD.
+See the [framework reference](spec/framework.md) for resource formats, APIs,
+cache rules and the isolated DOSBox-X profile.
+
+## Examples and reference
+
+The optional **examples ZIP** on GitHub Releases contains **Shadow Ops**
+(`shadow-ops.psx`), a tactical shooter, and **Sanitarium** (`sanitarium.psx`),
+a fixed-camera horror demo with pre-rendered backgrounds and depth layers.
+Extract it into the repository folder and open a project with **File → Open**.
+Keep each `.psx` with its data folder. These projects are distributed separately
+and are not required to build the tools; the C starter is included in the source.
+
+Detailed documentation:
+
+- [Game development](spec/game-development.md): authoring, workflow and validation.
+- [C89 modules](spec/modules.md): gameplay callbacks and runtime APIs.
+- [PSX Lib](spec/framework.md): C applications, resource banks and build contracts.
+- [Audio](spec/audio.md) and [textures](spec/textures.md): asset formats and conversion.
+- [Architecture](spec/architecture.md): editor/framework responsibilities.
+
+Shared development instructions are in the root [AGENTS.md](AGENTS.md) and
+[spec.md](spec.md). Host tests do not establish console compatibility or FPS;
+SDK builds and emulator checks remain separate validation steps.
