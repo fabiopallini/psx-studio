@@ -1381,6 +1381,7 @@ static void activate(GtkApplication *app, Studio *s)
         "spinbutton text { min-width: 0; padding: 2px; }"
         "list { background: #fff; color: #111; border: 2px inset #eee; } row:selected { background: #000080; color: white; }"
         ".view-toolbar spinbutton { min-height: 24px; } .view-toolbar spinbutton entry { padding: 1px 3px; min-width: 0; } .view-toolbar spinbutton button { padding: 1px 3px; min-width: 12px; min-height: 20px; }"
+        "button.log-control { min-height: 16px; min-width: 16px; padding: 1px 6px; }"
         "button.inspector-tab:checked { background: #000080; color: #fff; }"
         ".heading95 { background: #000080; color: white; padding: 5px; font-weight: bold; }"
         "textview text { background: #fff; color: #111; }"
@@ -1464,8 +1465,13 @@ static void activate(GtkApplication *app, Studio *s)
     GtkWidget *log_header=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,6);
     GtkWidget *log_title=gtk_label_new("Build log");gtk_label_set_xalign(GTK_LABEL(log_title),0);
     gtk_widget_set_hexpand(log_title,TRUE);gtk_box_append(GTK_BOX(log_header),log_title);
-    button(log_header,"Copy log",G_CALLBACK(copy_log),s);
-    button(log_header,"Hide",G_CALLBACK(hide_log),s);
+    GtkWidget *copy_log_button=button(log_header,"Copy log",G_CALLBACK(copy_log),s);
+    gtk_widget_add_css_class(copy_log_button,"log-control");
+    GtkWidget *collapse_log_button=button(log_header,"",G_CALLBACK(hide_log),s);
+    gtk_button_set_icon_name(GTK_BUTTON(collapse_log_button),"pan-down-symbolic");
+    gtk_widget_add_css_class(collapse_log_button,"log-control");
+    gtk_widget_set_tooltip_text(collapse_log_button,"Hide build log");
+    gtk_accessible_update_property(GTK_ACCESSIBLE(collapse_log_button),GTK_ACCESSIBLE_PROPERTY_LABEL,"Hide build log",-1);
     gtk_box_append(GTK_BOX(log_panel),log_header);
     GtkWidget *logs=gtk_scrolled_window_new();gtk_widget_set_size_request(logs,-1,180);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(logs),s->log);
@@ -1475,7 +1481,8 @@ static void activate(GtkApplication *app, Studio *s)
     gtk_label_set_ellipsize(GTK_LABEL(s->status), PANGO_ELLIPSIZE_END);
     GtkWidget *status_row=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,6);
     gtk_widget_set_hexpand(s->status,TRUE);gtk_box_append(GTK_BOX(status_row),s->status);
-    button(status_row,"Build log",G_CALLBACK(show_log),s);
+    GtkWidget *show_log_button=button(status_row,"Build log",G_CALLBACK(show_log),s);
+    gtk_widget_add_css_class(show_log_button,"log-control");
     gtk_box_append(GTK_BOX(root),status_row);
     studio_refresh(s); studio_status(s, "Editor ready. Create or open a .psx project.");
     gtk_window_present(GTK_WINDOW(s->window));

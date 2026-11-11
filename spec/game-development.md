@@ -215,7 +215,8 @@ Studio's bottom **Build log** button remains accessible during builds. The log
 panel opens at build start, resets for each build and reopens automatically on
 failure. It displays the captured subprocess output after completion, using
 selectable monospace text; **Copy log** copies the complete displayed text.
-**Hide** or **View → Show log** controls visibility without changing the build.
+The downward arrow or **View → Show log** controls visibility without changing
+the build.
 
 Compiler output is stored in OUTPUT/src/BUILD.LOG; DOSBox host output is in
 OUTPUT/dosbox.log. A nonzero DOSBox exit now includes both logs in the captured
