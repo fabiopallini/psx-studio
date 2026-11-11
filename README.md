@@ -107,6 +107,11 @@ its build and tests do not require the editor or parent Makefile.
    such as `pcsxr -cdfile {cue}`. PSX Lib is found automatically.
 5. Choose **Build → Build**, then **Run emulator**.
 
+The build log opens when a build starts and reopens automatically on failure.
+Use the bottom **Build log** button to show it at any time, including while
+building, and **Copy log** to copy diagnostics. Compiler errors are included
+even when DOSBox-X exits unsuccessfully.
+
 Keep `MyGame.psx` and `MyGame_psx_data/` together. Use Scenes for multiple levels.
 The **Background** tab supports a pre-rendered PNG and transparent foreground
 layers with camera-space depth; author their physical collision volumes separately.

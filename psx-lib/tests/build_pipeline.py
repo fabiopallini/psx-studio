@@ -149,6 +149,38 @@ class BuildTests(unittest.TestCase):
 
 
     @unittest.skipIf(os.name == 'nt', 'Executable fixture uses a POSIX shebang.')
+    def test_compiler_diagnostics_survive_dosbox_failure(self):
+        import sys
+        fake = self.root / 'dosbox-x'
+        environment = dict(os.environ, PATH=str(self.root) + os.pathsep + os.environ.get('PATH', ''))
+        compiler = b"PsyMake\r\nlogic.c:12: error: structure has no member named hud\r\nCP437: \x82\r\n"
+        for exit_code in (1, 0):
+            with self.subTest(dosbox_exit=exit_code):
+                fake.write_text('#!' + sys.executable + '\nfrom pathlib import Path\nimport sys\n'
+                                + 'Path("src/BUILD.LOG").write_bytes(' + repr(compiler) + ')\n'
+                                + 'Path("FAILED.TXT").write_text("failed")\n'
+                                + 'print("DOSBox fixture reached the compiler")\n'
+                                + f'sys.exit({exit_code})\n')
+                fake.chmod(0o755)
+                result = subprocess.run([str(EDITOR), '--build-ps1', '--source-root', str(self.source),
+                                         '--psyq', str(self.sdk), '--root', str(self.root)],
+                                        env=environment, capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                combined = result.stdout + result.stderr
+                self.assertIn('logic.c:12: error: structure has no member named hud', combined)
+                self.assertIn('CP437: é', combined)
+                if exit_code:
+                    self.assertIn('Psy-Q compiler log', combined)
+                    self.assertIn('DOSBox fixture reached the compiler', combined)
+
+    def test_preparation_discards_stale_dosbox_diagnostics(self):
+        self.prepare()
+        log = self.output() / 'dosbox.log'
+        log.write_text('OLD BUILD FAILURE')
+        self.prepare()
+        self.assertFalse(log.exists())
+
+    @unittest.skipIf(os.name == 'nt', 'Executable fixture uses a POSIX shebang.')
     def test_dosbox_x_uses_isolated_config_and_larger_private_area(self):
         import sys
         fake = self.root / 'dosbox-x'

@@ -21,19 +21,26 @@ static Object *selected(Studio *s)
         g_ptr_array_index(s->project.objects, s->selected) : NULL;
 }
 
+static void append_log(Studio *s,const char *message)
+{
+    if(!s->log || !message || !*message) return;
+    GtkTextBuffer *buffer=gtk_text_view_get_buffer(GTK_TEXT_VIEW(s->log));
+    GtkTextIter end;gtk_text_buffer_get_end_iter(buffer,&end);
+    gtk_text_buffer_insert(buffer,&end,message,-1);
+    gtk_text_buffer_insert(buffer,&end,"\n",1);
+    GtkTextMark *mark=gtk_text_buffer_get_mark(buffer,"build-log-end");
+    if(mark) gtk_text_buffer_move_mark(buffer,mark,&end);
+    else mark=gtk_text_buffer_create_mark(buffer,"build-log-end",&end,FALSE);
+    /* Mark-based scrolling waits for wrapped text layout to be validated. */
+    gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(s->log),mark,0,TRUE,0,1);
+}
+
 void studio_status(Studio *s, const char *message)
 {
     gtk_label_set_text(GTK_LABEL(s->status), message);
     if(s->settings_status && gtk_widget_get_visible(s->settings_window))
         gtk_label_set_text(GTK_LABEL(s->settings_status),message);
-    if (s->log) {
-        GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(s->log));
-        GtkTextIter end;
-        gtk_text_buffer_get_end_iter(buffer, &end);
-        gtk_text_buffer_insert(buffer, &end, message, -1);
-        gtk_text_buffer_insert(buffer, &end, "\n", 1);
-        gtk_text_view_scroll_to_iter(GTK_TEXT_VIEW(s->log), &end, 0, FALSE, 0, 0);
-    }
+    append_log(s,message);
 }
 
 static void title(Studio *s)
@@ -454,15 +461,31 @@ static void project_name_changed(GtkEditable *entry, Studio *s)
     s->project.dirty = TRUE; title(s);
 }
 
+static void show_log(GtkButton *button,Studio *s)
+{ (void)button;gtk_widget_set_visible(s->log_panel,TRUE); }
+
+static void hide_log(GtkButton *button,Studio *s)
+{ (void)button;gtk_widget_set_visible(s->log_panel,FALSE); }
+
+static void copy_log(GtkButton *button,Studio *s)
+{
+    (void)button;
+    GtkTextBuffer *buffer=gtk_text_view_get_buffer(GTK_TEXT_VIEW(s->log));
+    GtkTextIter start,end;gtk_text_buffer_get_bounds(buffer,&start,&end);
+    char *text=gtk_text_buffer_get_text(buffer,&start,&end,FALSE);
+    gdk_clipboard_set_text(gtk_widget_get_clipboard(s->log),text);g_free(text);
+}
+
 static void build_finished(GObject *source, GAsyncResult *result, gpointer data)
 {
     Studio *s = data;
     char *output = NULL;
     GError *error = NULL;
     gboolean communicated = g_subprocess_communicate_utf8_finish(G_SUBPROCESS(source), result, &output, NULL, &error);
-    if (output && *output) studio_status(s, output);
+    if (output && *output) append_log(s, output);
     gboolean ok = communicated && g_subprocess_get_successful(G_SUBPROCESS(source));
-    studio_status(s, error ? error->message : ok ? "PS1 build completed. Use the Build menu to run the emulator or open the output folder." : "PS1 build failed. Check the log.");
+    studio_status(s, error ? error->message : ok ? "PS1 build completed. Use the Build menu to run the emulator or open the output folder." : "PS1 build failed. Details are shown in the build log.");
+    if(!ok) show_log(NULL,s);
     g_clear_error(&error); g_free(output); g_clear_object(&s->build_process);
     gtk_widget_set_sensitive(s->menubar, TRUE); gtk_widget_set_sensitive(s->body, TRUE);
     refresh_output(s);
@@ -488,11 +511,13 @@ static void build_clicked(GtkButton *button, Studio *s)
         if(!project_save(&s->project, s->project.path, &error)) problem=error->message;
     }
     if (problem) {
-        studio_status(s, problem); g_clear_error(&error);
+        studio_status(s, problem);show_log(NULL,s);g_clear_error(&error);
         if (s->build_and_exit) { exit_status = 1; destroy_window(s); }
         return;
     }
     title(s);
+    gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(s->log)),"",0);
+    show_log(NULL,s);
     GSubprocessLauncher *launcher = g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_MERGE);
     g_subprocess_launcher_set_cwd(launcher, s->root);
     s->build_process = g_subprocess_launcher_spawn(launcher, &error, s->executable, "--build-ps1",
@@ -1434,11 +1459,24 @@ static void activate(GtkApplication *app, Studio *s)
     gtk_paned_set_position(GTK_PANED(body), 225); gtk_paned_set_position(GTK_PANED(right), 720);
     s->log = gtk_text_view_new(); gtk_text_view_set_editable(GTK_TEXT_VIEW(s->log), FALSE);
     gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(s->log), GTK_WRAP_WORD_CHAR);
-    GtkWidget *logs = gtk_scrolled_window_new(); gtk_widget_set_size_request(logs, -1, 72);
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(logs), s->log); gtk_box_append(GTK_BOX(root), logs);
-    s->log_panel=logs;gtk_widget_set_visible(logs,FALSE);
+    gtk_text_view_set_monospace(GTK_TEXT_VIEW(s->log),TRUE);
+    GtkWidget *log_panel=gtk_box_new(GTK_ORIENTATION_VERTICAL,4);
+    GtkWidget *log_header=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,6);
+    GtkWidget *log_title=gtk_label_new("Build log");gtk_label_set_xalign(GTK_LABEL(log_title),0);
+    gtk_widget_set_hexpand(log_title,TRUE);gtk_box_append(GTK_BOX(log_header),log_title);
+    button(log_header,"Copy log",G_CALLBACK(copy_log),s);
+    button(log_header,"Hide",G_CALLBACK(hide_log),s);
+    gtk_box_append(GTK_BOX(log_panel),log_header);
+    GtkWidget *logs=gtk_scrolled_window_new();gtk_widget_set_size_request(logs,-1,180);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(logs),s->log);
+    gtk_box_append(GTK_BOX(log_panel),logs);gtk_box_append(GTK_BOX(root),log_panel);
+    s->log_panel=log_panel;gtk_widget_set_visible(log_panel,FALSE);
     s->status = gtk_label_new(""); gtk_label_set_xalign(GTK_LABEL(s->status), 0);
-    gtk_label_set_ellipsize(GTK_LABEL(s->status), PANGO_ELLIPSIZE_END); gtk_box_append(GTK_BOX(root), s->status);
+    gtk_label_set_ellipsize(GTK_LABEL(s->status), PANGO_ELLIPSIZE_END);
+    GtkWidget *status_row=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,6);
+    gtk_widget_set_hexpand(s->status,TRUE);gtk_box_append(GTK_BOX(status_row),s->status);
+    button(status_row,"Build log",G_CALLBACK(show_log),s);
+    gtk_box_append(GTK_BOX(root),status_row);
     studio_refresh(s); studio_status(s, "Editor ready. Create or open a .psx project.");
     gtk_window_present(GTK_WINDOW(s->window));
     if (s->build_and_exit) build_clicked(NULL, s);

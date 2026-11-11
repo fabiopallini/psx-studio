@@ -652,6 +652,32 @@ static gboolean commit_objects(const char *output,const char *sdk,gboolean diagn
     g_free(context);g_free(src);g_free(objects);g_free(pending);g_object_unref(parser);return ok;
 }
 
+/* Publish bounded, UTF-8 diagnostics even when DOSBox exits before verification.
+ * Compiler errors live in BUILD.LOG, not in DOSBox's host console output. */
+static void print_failed_log(const char *output,const char *relative,const char *label,gboolean dos_encoding)
+{
+    const gsize limit=128*1024;
+    char *path=file_at(output,relative);GFile *file=g_file_new_for_path(path);
+    GFileInputStream *stream=g_file_read(file,NULL,NULL);g_object_unref(file);
+    if(!stream) {g_free(path);return;}
+    GFileInfo *info=g_file_input_stream_query_info(stream,G_FILE_ATTRIBUTE_STANDARD_SIZE,NULL,NULL);
+    goffset size=info?g_file_info_get_size(info):0;if(info) g_object_unref(info);
+    goffset offset=size>(goffset)limit?size-(goffset)limit:0;
+    gboolean ok=!offset || g_seekable_seek(G_SEEKABLE(stream),offset,G_SEEK_SET,NULL,NULL);
+    char *bytes=g_malloc(limit+1);gsize length=0;
+    if(ok) ok=g_input_stream_read_all(G_INPUT_STREAM(stream),bytes,limit,&length,NULL,NULL);
+    g_object_unref(stream);
+    if(ok && length) {
+        char *decoded=dos_encoding?g_convert(bytes,length,"UTF-8","CP437",NULL,NULL,NULL):NULL;
+        if(!decoded) decoded=g_utf8_make_valid(bytes,length);
+        GString *text=g_string_new(decoded);g_free(decoded);
+        g_string_replace(text,"\r\n","\n",0);g_string_replace(text,"\r","\n",0);
+        g_printerr("\n%s (%s):\n%s%s\n",label,path,offset?"[Showing the last 128 KiB]\n":"",text->str);
+        g_string_free(text,TRUE);
+    }
+    g_free(bytes);g_free(path);
+}
+
 typedef struct {GMainLoop *loop;GSubprocess *process;GError *error;const char *log;gboolean timed_out,ok;} DosWait;
 static void dos_finished(GObject *source,GAsyncResult *result,gpointer data)
 {
@@ -798,7 +824,7 @@ int engine_build_main(int argc,char **argv)
     const char *dirs[]={"src","cdrom","data","TEMP","obj"};
     for(guint i=0;ok && i<G_N_ELEMENTS(dirs);i++) {char *path=file_at(output,dirs[i]);ok=safe_path(path,&error);g_free(path);}
     if(!ok) goto done;
-    const char *artifacts[]={"SUCCESS.OK","FAILED.TXT","src/MAIN.EXE","src/MAIN.CPE","src/BUILD.LOG","cdrom/GAME.ISO","cdrom/game.cue","cdrom/TEMP.IMG","build-info.json"};
+    const char *artifacts[]={"SUCCESS.OK","FAILED.TXT","src/MAIN.EXE","src/MAIN.CPE","src/BUILD.LOG","dosbox.log","cdrom/GAME.ISO","cdrom/game.cue","cdrom/TEMP.IMG","build-info.json"};
     for(guint i=0;ok && i<G_N_ELEMENTS(artifacts);i++) {char *path=file_at(output,artifacts[i]);ok=remove_tree(path,&error);g_free(path);}
     if(g_file_get_contents(latest,&marker,NULL,NULL)) {if(!strcmp(g_strstrip(marker),output)) g_unlink(latest);g_free(marker);marker=NULL;}
     char *src=file_at(output,"src"),*cdrom=file_at(output,"cdrom");
@@ -833,7 +859,13 @@ int engine_build_main(int argc,char **argv)
         char *config=g_strdup_printf("[sdl]\noutput=surface\n[dosbox]\nmemsize=64\nprivate area size=131072\n[dos]\nems=false\n[cpu]\ncore=dynamic\ncputype=386\ncycles=fixed 200000\n[autoexec]\nmount c \"%s\"\nmount d \"%s\" -ro\nc:\ncall BUILD.BAT\nexit\n",output,sdk);
         ok=write_at(output,"dos.conf",config,-1,&error);g_free(config);
     }
-    if(ok && !prepare) ok=run_dosbox(output,&error) && verify_build(output,&error);
+    if(ok && !prepare) {
+        ok=run_dosbox(output,&error);
+        if(!ok) {
+            print_failed_log(output,"dosbox.log","DOSBox-X log",FALSE);
+            print_failed_log(output,"src/BUILD.LOG","Psy-Q compiler log",TRUE);
+        } else ok=verify_build(output,&error);
+    }
     if(ok && !prepare) {
         ok=commit_objects(output,sdk,diagnostics,&error);
         if(!ok) {char *success=file_at(output,"SUCCESS.OK");g_unlink(success);g_free(success);}

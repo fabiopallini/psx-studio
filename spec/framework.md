@@ -331,6 +331,16 @@ The 128 KiB DOS table arena and disabled EMS avoid compiler child-process/table
 exhaustion and upper-memory overlap. Preserve incremental hashing and final
 artifact verification when changing this profile.
 
+### Failure diagnostics
+
+SDK compiler output is stored separately in src/BUILD.LOG from the DOSBox host
+console in dosbox.log. If DOSBox exits unsuccessfully or times out, print both
+available logs before the final error so callers can expose compiler failures.
+Each failure excerpt is bounded to its last 128 KiB. Decode compiler output as
+CP437, sanitize host output to valid UTF-8 and normalize line endings. Discard
+previous dosbox.log during preparation so launch failures cannot show stale
+messages. Diagnostics must not replace the original error/exit status.
+
 ## Validation
 
 `make test` covers C89 runtime, overlays, object/rotation caches, snapshots,

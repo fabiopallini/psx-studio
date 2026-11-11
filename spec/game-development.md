@@ -208,14 +208,30 @@ is not a console build.
 On Linux run GUI/DOSBox/emulator checks using the isolated Xvfb environment from
 spec.md. Never use the user's emulator profile or primary DOSBox config.
 
+### Build diagnostics
+
+Studio's bottom **Build log** button remains accessible during builds. The log
+panel opens at build start, resets for each build and reopens automatically on
+failure. It displays the captured subprocess output after completion, using
+selectable monospace text; **Copy log** copies the complete displayed text.
+**Hide** or **View → Show log** controls visibility without changing the build.
+
+Compiler output is stored in OUTPUT/src/BUILD.LOG; DOSBox host output is in
+OUTPUT/dosbox.log. A nonzero DOSBox exit now includes both logs in the captured
+output. Inspect compiler diagnostics before treating a build failure as a
+DOSBox configuration problem. The framework removes stale DOSBox logs during
+preparation and decodes compiler output from CP437 to UTF-8 for the editor.
+
 ### Known limitations
 
 - Project JSON v1–v3 remains readable. Modules using the retired Studio HUD or
   inventory structs must migrate to engine overlays and application-owned state.
   The installed legacy Shadow Ops archive still needs that migration; its
   gameplay integration test reports a skip while authoring checks remain active.
-  Sanitarium also retains legacy HUD/inventory modules that need migration before
-  console builds with current PSX Lib; its editor preview/export remain available.
+  Sanitarium owns its menu, combat HUD, inventory and campaign state in its C
+  modules, using the generic overlay callback. Its optional
+  `/export/sanitarium-gameplay` test compiles the exported C89 and exercises
+  inventory pause, shooting, room persistence, death and restart.
 - Resource packaging uses the engine's C asset-list interface with one resource
   bank per Scene. Each bank has its own CD texture directory, preserving SDK
   lookup for projects whose combined texture directory would span sectors.

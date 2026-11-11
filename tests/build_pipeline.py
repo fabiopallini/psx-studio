@@ -114,6 +114,20 @@ class BuildTests(unittest.TestCase):
         self.assertIn('PSX Lib not found', result.stderr)
         self.assertFalse((self.root / 'build/studio-projects').exists())
 
+    @unittest.skipIf(os.name == 'nt', 'Executable fixture uses a POSIX shebang.')
+    def test_failed_sdk_compiler_log_reaches_studio(self):
+        self.require_engine()
+        import sys
+        fake = self.root / 'dosbox-x'
+        fake.write_text('#!' + sys.executable + '\nfrom pathlib import Path\nimport sys\n'
+                        'Path("src/BUILD.LOG").write_text("module.c:7: error: unknown HUD field\\n")\n'
+                        'print("Compiler fixture failed")\nsys.exit(1)\n')
+        fake.chmod(0o755)
+        environment = dict(os.environ, PATH=str(self.root) + os.pathsep + os.environ.get('PATH', ''))
+        result = self.run_build(prepare=False, success=False, env=environment)
+        self.assertIn('module.c:7: error: unknown HUD field', result.stdout + result.stderr)
+        self.assertIn('Psy-Q compiler log', result.stdout + result.stderr)
+
     def test_missing_engine_is_explicit(self):
         result = self.run_build(engine=self.root / 'missing-engine', success=False)
         self.assertIn('PSX Lib not found', result.stderr)

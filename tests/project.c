@@ -656,6 +656,19 @@ static void shadow_ops_example(void)
     project_clear(&p);
 }
 
+static void sanitarium_gameplay(void)
+{
+    Project p;GError *error=NULL;char *harness=NULL;
+    if(!g_file_test("examples/sanitarium.psx",G_FILE_TEST_IS_REGULAR)) {
+        g_test_skip("Separate Sanitarium example archive is unavailable.");return;
+    }
+    project_init(&p);
+    g_assert_true(project_load(&p,"examples/sanitarium.psx",&error));g_assert_no_error(error);
+    g_assert_true(g_file_get_contents("tests/sanitarium.c",&harness,NULL,&error));g_assert_no_error(error);
+    compile_export(&p,harness,"sanitarium-gameplay");
+    g_free(harness);project_clear(&p);
+}
+
 static void scene_background(void)
 {
     Project p,q;project_init(&p);project_init(&q);GError *error=NULL;
@@ -844,5 +857,6 @@ int main(int argc, char **argv)
     g_test_add_func("/project/output-discovery", output_discovery);
     g_test_add_func("/project/projection-validation",projection_validation);
     g_test_add_func("/export/gameplay-behaviors", gameplay_behaviors);
+    g_test_add_func("/export/sanitarium-gameplay", sanitarium_gameplay);
     int result = g_test_run(); remove_tree(test_root); g_free(template); g_free(build); return result;
 }
