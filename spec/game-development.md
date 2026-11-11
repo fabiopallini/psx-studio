@@ -148,10 +148,10 @@ share `/export/shadow-ops-example`; no separate prototype project is required.
 Menu-style HUD messages have an opaque bordered panel sized to their visible
 text, including checkpoint confirmations and errors.
 
-The optional `examples/last-ward.psx` is an original fixed-camera survival horror
+The optional `examples/sanitarium.psx` is an original fixed-camera survival horror
 demo with a pre-rendered plate and genuine 3D actors/collisions/projectiles.
-Its accompanying guide documents controls, module IDs and transparent depth
-layers in the pharmacy.
+This authoring example is separate from the standalone Last Ward C game.
+Its pharmacy demonstrates transparent depth layers.
 Generic `/export/scene-background`, `/export/depth-layers` and native pipeline fixtures remain independent
 of example assets. Check both authoring preview and console framing after changing
 a plate or its camera; host exports cannot prove that the painted perspective
@@ -214,6 +214,8 @@ spec.md. Never use the user's emulator profile or primary DOSBox config.
   inventory structs must migrate to engine overlays and application-owned state.
   The installed legacy Shadow Ops archive still needs that migration; its
   gameplay integration test reports a skip while authoring checks remain active.
+  Sanitarium also retains legacy HUD/inventory modules that need migration before
+  console builds with current PSX Lib; its editor preview/export remain available.
 - Resource packaging uses the engine's C asset-list interface with one resource
   bank per Scene. Each bank has its own CD texture directory, preserving SDK
   lookup for projects whose combined texture directory would span sectors.

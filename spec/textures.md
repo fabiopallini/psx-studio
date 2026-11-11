@@ -113,5 +113,5 @@ The editor fits the native game frame into the viewport and scales the 3D previe
 with it. **View through camera** aligns authoring to the chosen camera. Keep a
 fixed camera so painted perspective and layer depth remain consistent. Selection
 outlines stay visible for editing even behind layers. Depth layers do not infer
-collisions: author matching solid volumes separately. The Last Ward pharmacy
+collisions: author matching solid volumes separately. The Sanitarium pharmacy
 uses `counter.png` at depth 550 and a separate counter collision volume.

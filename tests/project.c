@@ -562,53 +562,26 @@ static void multiple_scenes(void)
 
 static void scene_module_transition(void)
 {
-    if(!g_file_test("examples/first-scene.psx",G_FILE_TEST_IS_REGULAR)) {
-        g_test_skip("Install the examples archive to run this integration test.");return;
-    }
     Project p;project_init(&p);GError *error=NULL;
-    g_assert_true(project_load(&p,"examples/first-scene.psx",&error));g_assert_no_error(error);
+    Object *actor=project_add(&p,OBJECT_MESH);actor->position[0]=-90;
     char *file=path("module-scenes.psx");
     g_assert_true(project_save(&p,file,&error));g_assert_no_error(error);
-    g_assert_true(project_scene_switch(&p,2,&error));g_assert_no_error(error);
+    g_assert_nonnull(project_scene_add(&p,"Destination"));
+    actor=project_add(&p,OBJECT_MESH);actor->position[0]=20;
     char *data=project_data_path(file),*module=g_build_filename(data,"return.c",NULL);
     g_assert_true(g_file_set_contents(module,
         "#include \"object.h\"\nstatic void update(PsxObject *o,PsxScene *s,unsigned long input)"
         "{(void)o;if(input&2048UL)psx_scene_request_change(s,1);}\nconst PsxLogic psx_logic={0,update,0};\n",-1,&error));
     g_assert_no_error(error);
-    Object *player=g_ptr_array_index(p.objects,1);g_free(player->module);player->module=g_strdup("return.c");
+    g_free(actor->module);actor->module=g_strdup("return.c");
     g_assert_true(project_scene_switch(&p,1,&error));g_assert_no_error(error);
     compile_export(&p,
         "#include \"scene.h\"\n#include <assert.h>\n"
-        "int main(void) {PsxScene *s;s=studio_scene_load();assert(s->scene_id==1 && studio_texture_count==3);\n"
-        "assert(psx_scene_request_change(s,2));assert(studio_scene_apply_change());assert(s->scene_id==2 && studio_texture_count==3);\n"
+        "int main(void) {PsxScene *s;s=studio_scene_load();assert(s->scene_id==1 && studio_texture_count==0);\n"
+        "assert(psx_scene_request_change(s,2));assert(studio_scene_apply_change());assert(s->scene_id==2 && s->objects[0].position[0]==20);\n"
         "psx_scene_update(s,2048UL);assert(s->pending_scene==1);assert(studio_scene_apply_change());\n"
-        "assert(s->scene_id==1 && s->objects[1].position[0]==-90);return 0;}\n","export-module-transition");
+        "assert(s->scene_id==1 && s->objects[0].position[0]==-90);return 0;}\n","export-module-transition");
     project_clear(&p);g_free(file);g_free(data);g_free(module);
-}
-
-static void first_scene_example(void)
-{
-    if(!g_file_test("examples/first-scene.psx",G_FILE_TEST_IS_REGULAR)) {
-        g_test_skip("Install the examples archive to run this integration test.");return;
-    }
-    Project p;project_init(&p);GError *error=NULL;
-    g_assert_true(project_load(&p,"examples/first-scene.psx",&error));g_assert_no_error(error);
-    g_assert_cmpuint(p.scenes->len,==,2);
-    compile_export(&p,
-        "#include \"scene.h\"\n#include <assert.h>\n"
-        "int main(void) {PsxScene *s;int i;s=studio_scene_load();assert(s->scene_id==1);\n"
-        "assert(s->objects[1].kind==PSX_OBJECT_MESH && s->objects[2].kind==PSX_OBJECT_BILLBOARD);\n"
-        "assert(s->objects[2].collision_action==3 && s->objects[2].target_scene==2);\n"
-        "assert(s->objects[3].follow_target==2 && s->camera[0]==-90);\n"
-        "psx_scene_update(s,8192UL);assert(s->objects[1].position[0]==-85 && s->camera[0]==-85);\n"
-        "for(i=0;i<100 && !s->pending_scene;i++) psx_scene_update(s,8192UL);\n"
-        "assert(s->pending_scene==2);assert(studio_scene_apply_change());assert(s->scene_id==2);\n"
-        "assert(s->objects[1].position[0]==-90 && s->camera[0]==-90);\n"
-        "assert(s->objects[2].target_scene==1 && studio_texture_count==3);\n"
-        "for(i=0;i<100 && !s->pending_scene;i++) psx_scene_update(s,8192UL);\n"
-        "assert(s->pending_scene==1);assert(studio_scene_apply_change());assert(s->scene_id==1);\n"
-        "assert(s->objects[1].position[0]==-90);return 0;}\n","export-first-scene");
-    project_clear(&p);
 }
 
 static void sound_assets(void)
@@ -849,7 +822,6 @@ int main(int argc, char **argv)
     test_root = g_mkdtemp(template); g_assert_nonnull(test_root);
     g_test_add_func("/project/scene-snapshot-isolation",scene_snapshot_isolation);
     g_test_add_func("/export/scene-module-transition",scene_module_transition);
-    g_test_add_func("/export/first-scene-example",first_scene_example);
     g_test_add_func("/export/shadow-ops-example",shadow_ops_example);
     g_test_add_func("/project/multiple-scenes",multiple_scenes);
     g_test_add_func("/project/emulator-command",emulator_command);

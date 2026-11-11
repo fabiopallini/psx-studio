@@ -9,7 +9,7 @@ and converted directly to the PlayStation VAG format.
 
 ![PSX Studio editing the Shadow Ops level in the 3D viewport](screenshots/screenshot.png)
 
-![PSX Studio editing Last Ward with a pre-rendered background and 3D characters](screenshots/screenshot2.png)
+![PSX Studio editing Sanitarium with a pre-rendered background and 3D characters](screenshots/screenshot2.png)
 
 ## Getting started
 
@@ -167,11 +167,9 @@ Command-line output remains available when captured by scripts and the build log
 Example projects are distributed separately in the **examples ZIP** attached to
 this repository's **GitHub Releases**, rather than in the source repository:
 
-- **First Scene** (`first-scene.psx`): a simple two-level example with player
-  movement, a following camera and Scene transitions.
 - **Shadow Ops** (`shadow-ops.psx`): a tactical shooter with enemies, shooting,
   pickups, gated passages and manual memory-card checkpoints.
-- **Last Ward** (`last-ward.psx`): an original fixed-camera sanitarium demo with
+- **Sanitarium** (`sanitarium.psx`): an original fixed-camera sanitarium demo with
   pre-rendered backgrounds, an armed 3D survivor, five connected rooms with
   different fixed camera angles, twenty zombies and pixel-art blood impacts. A compact graphical inventory carries a
   glinting Sprite3D counter key used to unlock the ward. Press Cross at editable
