@@ -15,6 +15,7 @@ all: $(BINS) ../build/tests
 	$(CC) $(C89) $< ../runtime/object.c -lm -o $@
 ../build/test-render_cache: ../runtime/render.h
 ../build/test-frame: ../runtime/frame.h
+../build/test-checkpoint: ../runtime/save.h
 ../build/test-camera: camera.c ../runtime/camera.c
 	$(CC) $(C89) $^ -lm -o $@
 ../build/test-sound: sound.c ../pipeline/template/src/audio.c ../runtime/object.c

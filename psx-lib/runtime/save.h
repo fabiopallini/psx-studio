@@ -51,4 +51,35 @@ static unsigned int psx_checkpoint_decode(const unsigned char *data)
     scene=0;for(i=0;i<4;i++) scene|=(unsigned int)((unsigned long)data[264+i]<<(8*i));
     return scene;
 }
+#define PSX_SAVE_PAYLOAD_MAX 7916U
+static int psx_checkpoint_payload_encode(unsigned char *data,unsigned int scene,const char *title,
+    const unsigned char *payload,unsigned int size)
+{
+    unsigned int crc;
+    if(!payload || !size || size>PSX_SAVE_PAYLOAD_MAX || !scene) return 0;
+    memset(data,0,8192);psx_checkpoint_encode(data,scene,title);
+    data[270]='P';data[271]='1';data[272]=(unsigned char)size;data[273]=(unsigned char)(size>>8);
+    memcpy(data+276,payload,size);crc=psx_checkpoint_crc(data+272,size+4);
+    data[274]=(unsigned char)crc;data[275]=(unsigned char)(crc>>8);return 1;
+}
+static int psx_checkpoint_payload_decode(const unsigned char *data,unsigned char *payload,
+    unsigned int capacity,unsigned int *size)
+{
+    unsigned int count,crc;
+    /* CRC covers the length, zeroed CRC field and payload. */
+    if(!psx_checkpoint_decode(data) || data[270]!='P' || data[271]!='1' || !payload) return 0;
+    count=(unsigned int)data[272]|((unsigned int)data[273]<<8);
+    if(!count || count>capacity || count>PSX_SAVE_PAYLOAD_MAX) return 0;
+    /* Compute without mutating the source or allocating another card block. */
+    crc=65535U;
+    {
+        unsigned int i,j,value;
+        for(i=0;i<count+4;i++) {
+            value=(i==2 || i==3)?0:data[272+i];crc^=value<<8;
+            for(j=0;j<8;j++) crc=(crc&32768U)?((crc<<1)^4129U)&65535U:(crc<<1)&65535U;
+        }
+    }
+    if(data[274]!=(unsigned char)crc || data[275]!=(unsigned char)(crc>>8)) return 0;
+    memcpy(payload,data+276,count);*size=count;return 1;
+}
 #endif

@@ -54,7 +54,7 @@ static unsigned long snapshot_tick;
 static PsxTexture *textures;
 static unsigned int texture_count;
 static int font_enabled = 1;
-static int font_pending;
+static char frame_text[2][PSX_OVERLAY_TEXT_SIZE];
 static PsxFrameRate frame_rate;
 static PsxStepClock simulation_clock;
 static long camera_cy,camera_sy,camera_cp,camera_sp;
@@ -94,7 +94,9 @@ static void poll_render(void)
     if(slot<0) return;
     PutDrawEnv(&drawing[slot]);
     DrawOTag(&ordering[slot][STUDIO_DRAW_LIMIT-1]);
-    if(font_enabled && font_pending) {FntFlush(0);font_pending=0;}
+    if(font_enabled && frame_text[slot][0]) {
+        FntPrint("%s",frame_text[slot]);FntFlush(0);frame_text[slot][0]=0;
+    }
 }
 
 void psInit(void)
@@ -114,7 +116,7 @@ void psInit(void)
     psx_step_clock_reset(&simulation_clock,(unsigned long)VSync(-1));
     psx_frame_init(&frames);sampled_frames=0;simulation_scene=0;input_wait=0;snapshot_valid=0;
     FntLoad(960,256);FntOpen(8,8,304,224,0,512);SetDumpFnt(0);buffer_index=0;
-    font_pending=0;psAudioInit();
+    frame_text[0][0]=frame_text[1][0]=0;psAudioInit();
     VSyncCallback(display_vblank);
 }
 
@@ -122,15 +124,19 @@ void psInit(void)
  * message before blocking I/O; no arbitrary delay and no callbacks in interrupts. */
 void psShowLoading(const char *message)
 {
-    int slot;
+    int slot,i,length,padding;
     DRAWENV loading;
     DrawSync(0);psx_frame_discard(&frames);rendering=0;snapshot_valid=0;
     slot=1-frames.front;loading=drawing[slot];setRGB0(&loading,0,0,0);
     PutDrawEnv(&loading);
-    if(font_enabled) FntFlush(0);font_pending=0; /* Discard text queued by a canceled frame. */
-    DrawSync(0);PutDrawEnv(&loading);
+    frame_text[0][0]=frame_text[1][0]=0;
     if(font_enabled && message && *message) {
-        FntPrint("\n\n\n\n\n      %s",message);FntFlush(0);
+        /* The 304-pixel font window starts at (8,8), with 8-pixel cells. */
+        for(length=0;message[length] && message[length]!='\n';length++) {}
+        padding=length<38?(38-length)/2:0;
+        for(i=0;i<14;i++) FntPrint("\n");
+        for(i=0;i<padding;i++) FntPrint(" ");
+        FntPrint("%s",message);FntFlush(0);
     }
     DrawSync(0);VSync(0);PutDispEnv(&display[slot]);
     frames.front=slot;SetDispMask(1);
@@ -148,10 +154,8 @@ int psSetScene(PsxScene *scene,PsxTexture *images,unsigned int count)
     snapshot_valid=0;rendering=0;
     /* Startup and explicit Scene loads may block for SDK/CD I/O. The game
      * calls this only at a GPU-idle boundary, never from a render yield. */
-    /* Drop any debug text belonging to a canceled queued frame. Flush it to
-     * the hidden buffer so the new Scene starts with an empty font stream. */
-    PutDrawEnv(&drawing[1-frames.front]);
-    if(font_enabled) FntFlush(0);font_pending=0;
+    /* Cancel queued text without touching the visible loading framebuffer. */
+    frame_text[0][0]=frame_text[1][0]=0;
     DrawSync(0);
     sampled_frames=frames.count;
     frame_scene=*scene;frame_scene.objects=frame_objects;current_scene=&frame_scene;
@@ -764,7 +768,10 @@ void psDrawOverlay(void)
             quad->tpage=texture->tpage;addPrim(&ordering[buffer_index][0],quad);
         }
     }
-    if(psFontEnabled() && current_scene->overlay.text[0]) {FntPrint("%s",current_scene->overlay.text);font_pending=1;}
+    /* Text belongs to this GPU slot, just like the primitive packets. Queue
+     * SDK glyphs only when submitting this slot, after the previous GPU ends. */
+    memcpy(frame_text[buffer_index],current_scene->overlay.text,PSX_OVERLAY_TEXT_SIZE);
+    frame_text[buffer_index][PSX_OVERLAY_TEXT_SIZE-1]=0;
 }
 /* Insert at the same depth convention as ordinary triangles. Higher camera
  * depth draws first. Reverse equal-depth layers so list order is compositing order. */

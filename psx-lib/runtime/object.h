@@ -93,6 +93,8 @@ typedef struct PsxCheckpoint {
     int operation,status; /* Request: LOAD/SAVE; completion: 1 success, -1 failure. */
     unsigned int scene_id; /* Application-defined nonzero checkpoint ID. */
     const char *file,*title; /* Application-owned card namespace and display title. */
+    unsigned char *data; /* Optional application payload, copied at the I/O boundary. */
+    unsigned int size,capacity; /* SAVE size; LOAD capacity and resulting size. */
 } PsxCheckpoint;
 
 /* Raw left-stick axes after a radial dead zone, -128..127 (128 is centre

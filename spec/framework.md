@@ -220,7 +220,26 @@ PsxCheckpoint uses application-owned file/title and checkpoint IDs. Request
 PSX_CHECKPOINT_SAVE/LOAD through operation and check status 1/-1. The application
 maps loaded IDs to its own state. Card I/O occurs at GPU idle and resets timing;
 it is not a general object serializer. scene->loading supplies a static caption
-for application-controlled loading boundaries. Do not perform loading in draws.
+for application-controlled loading boundaries. Captions are centred in the
+existing 8-pixel font grid. The application owns any minimum display duration;
+the backend adds no delay. Scene loading leaves the draw environment untouched
+when no font text is pending, preserving the visible caption during CD I/O.
+Do not perform loading in draws.
+
+Optional checkpoint payloads use application-owned `data`, `size` and `capacity`.
+With data == NULL the existing 512-byte scene-ID format is unchanged. With data
+present, SAVE writes one 8192-byte block with up to 7916 opaque payload bytes;
+LOAD validates the scene header, payload marker, length, capacity and CRC before
+copying any application data. The application validates its own format/version
+and restores its state. The library does not interpret payload fields or select
+application filenames, menus or build flags. Card operations never format a card
+or enumerate/delete unrelated files. Status remains 1 on success and -1 on failure.
+
+Overlay text is copied into one bounded buffer per GPU slot. FntPrint/FntFlush
+run when that slot is submitted after the preceding GPU work finishes, rather
+than while building a later frame. This prevents text from consecutive menu
+states sharing the SDK's single glyph queue. Canceled slots discard text without
+changing the visible loading framebuffer; empty slots perform no font flush.
 
 psx_sound_play(scene,name,volume,pan) starts an already uploaded sample, volume
 0..16383 and Q12 pan -4096..4096. Eight round-robin effect voices permit overlap;
@@ -273,7 +292,8 @@ page/atlas changes invalidate UV packing. Fully visible textured triangles emit
 the standard eight-word FT3 packet directly; clipped triangles retain the
 general path. The SDK backend emits explicit RTPS/RTPT command words because
 older INLINE_C.H variants contain incompatible pseudo-opcodes. Empty font
-queues skip FntFlush; queued text and loading boundaries retain flushing.
+queues skip FntFlush, including at loading boundaries; text is flushed when its
+GPU slot is submitted.
 
 Frame snapshots copy the scene prefix and active overlay commands/text,
 backdrops and rotation slots, plus the complete allocated object count. Unused
