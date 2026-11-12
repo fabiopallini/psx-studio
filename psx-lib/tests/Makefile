@@ -13,6 +13,8 @@ all: $(BINS) ../build/tests
 	cd .. && PYTHONDONTWRITEBYTECODE=1 $(PYTHON) tests/build_pipeline.py
 ../build/test-%: %.c ../runtime/object.c ../runtime/object.h
 	$(CC) $(C89) $< ../runtime/object.c -lm -o $@
+../build/test-render_cache: ../runtime/render.h
+../build/test-frame: ../runtime/frame.h
 ../build/test-camera: camera.c ../runtime/camera.c
 	$(CC) $(C89) $^ -lm -o $@
 ../build/test-sound: sound.c ../pipeline/template/src/audio.c ../runtime/object.c

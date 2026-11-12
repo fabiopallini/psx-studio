@@ -55,7 +55,22 @@ static void psx_frame_discard(PsxFrameQueue *q)
  * copied. The caller supplies storage for source->count objects. */
 static void psx_frame_snapshot(PsxScene *frame,PsxObject *objects,const PsxScene *source)
 {
-    *frame=*source;
+    unsigned int count,length;
+    /* Copy active inline data only. A mostly empty overlay must not copy all
+     * 384 command slots every frame; snapshot ownership still stays by value. */
+    memcpy(frame,source,(const char *)&source->overlay-(const char *)source);
+    frame->overlay.count=source->overlay.count;frame->overlay.sprites=source->overlay.sprites;
+    count=source->overlay.count;
+    if(count>PSX_OVERLAY_CAPACITY) count=PSX_OVERLAY_CAPACITY;
+    if(count) memcpy(frame->overlay.commands,source->overlay.commands,count*sizeof(PsxOverlayCommand));
+    length=0;while(length<PSX_OVERLAY_TEXT_SIZE-1 && source->overlay.text[length]) length++;
+    memcpy(frame->overlay.text,source->overlay.text,length);frame->overlay.text[length]=0;
+    frame->backdrop_count=source->backdrop_count;count=source->backdrop_count;
+    if(count>PSX_MAX_BACKDROPS) count=PSX_MAX_BACKDROPS;
+    if(count) memcpy(frame->backdrops,source->backdrops,count*sizeof(PsxBackdrop));
+    frame->rotation_count=source->rotation_count;count=source->rotation_count;
+    if(count>PSX_OBJECT_ROTATION_CAPACITY) count=PSX_OBJECT_ROTATION_CAPACITY;
+    if(count) memcpy(frame->rotations,source->rotations,count*sizeof(PsxObjectRotation));
     if(source->count) memcpy(objects,source->objects,source->count*sizeof(PsxObject));
     frame->objects=objects;
 }

@@ -57,6 +57,23 @@ int main(void)
     psx_frame_snapshot(&frame,snapshot,&scene);
     psx_overlay_clear(&scene);
     assert(frame.overlay.count==1 && !strcmp(frame.overlay.text,"EMPTY SCENE"));
+    /* Shrinking and growing active arrays must never expose stale data. */
+    scene.rotation_count=PSX_OBJECT_ROTATION_CAPACITY;
+    scene.rotations[PSX_OBJECT_ROTATION_CAPACITY-1].m[8]=1234;
+    scene.backdrop_count=PSX_MAX_BACKDROPS;scene.backdrops[PSX_MAX_BACKDROPS-1].depth=987;
+    while(scene.overlay.count<PSX_OVERLAY_CAPACITY) assert(psx_overlay_rect(&scene,1,2,3,4,5,6,7));
+    psx_frame_snapshot(&frame,snapshot,&scene);
+    assert(frame.rotation_count==PSX_OBJECT_ROTATION_CAPACITY);
+    assert(frame.rotations[PSX_OBJECT_ROTATION_CAPACITY-1].m[8]==1234);
+    assert(frame.backdrops[PSX_MAX_BACKDROPS-1].depth==987);
+    assert(frame.overlay.commands[PSX_OVERLAY_CAPACITY-1].r==5);
+    scene.rotation_count=1;scene.backdrop_count=0;psx_overlay_clear(&scene);
+    psx_frame_snapshot(&frame,snapshot,&scene);
+    assert(frame.rotation_count==1 && !frame.backdrop_count && !frame.overlay.count);
+    scene.rotation_count=PSX_OBJECT_ROTATION_CAPACITY;
+    scene.rotations[PSX_OBJECT_ROTATION_CAPACITY-1].m[8]=4321;
+    psx_frame_snapshot(&frame,snapshot,&scene);
+    assert(frame.rotations[PSX_OBJECT_ROTATION_CAPACITY-1].m[8]==4321);
     puts("C89 frame queue: GPU ownership, overlap, VBlank, discard, wrap and frozen view passed.");
     return 0;
 }

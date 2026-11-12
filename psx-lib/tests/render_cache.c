@@ -91,6 +91,16 @@ static void direct_matrices(void)
     assert(out[0]==12 && out[1]==-8 && out[2]==-6);
     assert(psx_gte_object_matrix(camera,rotation->m,object.scale,combined));
     assert(combined[2]==2048 && combined[4]==2048 && combined[6]==-2048);
+    {
+        short billboard[9];
+        long scales[3]={676,819,4096};
+        assert(psx_gte_billboard_matrix(scales,billboard));
+        assert(billboard[0]==676 && billboard[4]==-819 && billboard[8]==0);
+        for(k=0;k<9;k++) if(k!=0 && k!=4) assert(!billboard[k]);
+        scales[0]=32768;assert(!psx_gte_billboard_matrix(scales,billboard));
+        scales[0]=-32768;scales[1]=32768;assert(psx_gte_billboard_matrix(scales,billboard));
+        scales[1]=-32768;assert(!psx_gte_billboard_matrix(scales,billboard));
+    }
     psx_projection_snapshot(&cache,&object,&scene);assert(!psx_shape_changed(&cache,&object,&scene));
     rotation->m[1]=32;assert(psx_shape_changed(&cache,&object,&scene));
     psx_projection_snapshot(&cache,&object,&scene);object.position[0]=9;
@@ -149,6 +159,9 @@ int main(void)
     assert(psx_screen_region(screen)==0);screen[0]=320;assert(psx_screen_region(screen)==2);
     screen[0]=-1;screen[1]=-1;assert(psx_screen_region(screen)==5);
     screen[0]=100;screen[1]=256;assert(psx_screen_region(screen)==8);
+    assert(psx_gpu_uv_word(300,511,0x1234)==0x1234ff2cUL);
+    assert(psx_gpu_xy_word(-1,255)==0x00ffffffUL);
+    assert(psx_gpu_xy_word(319,-1)==0xffff013fUL);
     precise_parts();terrain_sharing();full_hash();direct_matrices();
     assert(psx_gte_offset_fits(offset));offset[0]=-32769;assert(!psx_gte_offset_fits(offset));
     offset[0]=0;offset[1]=32768;assert(!psx_gte_offset_fits(offset));

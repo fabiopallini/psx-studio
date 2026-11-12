@@ -26,7 +26,7 @@ Writable sample-bank metadata and texture indices stay local to each bank.
 Runtime C89 objects, cameras, input, collision, frame snapshots and fixed-step
 helpers are independent of host asset types. A PsxScene is an application-owned
 runtime context; it does not imply an authoring document. Rendered object,
-camera, overlay and rotation-bank state are frozen by value; immutable mesh
+camera, active overlay and rotation-bank state are frozen by value; immutable mesh
 pointers are shared. The backend uses two packet buffers to overlap CPU/GPU work.
 
 ## Direct C source projects
@@ -242,6 +242,44 @@ Use immutable mesh swaps and object transforms for animation. Every replacement
 pose must fit the reserved vertex capacity established at loading. Changes to
 mesh vertices in flight invalidate snapshot/cache assumptions and are forbidden.
 
+### Visible meshes, billboards and GTE projection
+
+The native projection cache records whether all shared positions lie on screen
+and in front of the near plane. Such meshes skip repeated per-triangle clipping
+classification and GPU span tests; ordinary backface/depth/UV handling remains.
+Any object/camera/matrix change recomputes this classification. Crossing the near
+plane or a screen edge retains the existing bounded clipping path.
+
+Camera-facing billboards also use a direct GTE matrix: X/Y scale is applied
+in view space, with constant centre depth. This avoids rotating each corner out
+of and back into camera space. Oversized coefficients keep the legacy path.
+The hardware projector batches three shared positions when possible; overflow
+or near-plane cases retain the individual vertex fallback. Render polling
+uses a shared sixteen-unit vertex/triangle work budget across rigid parts,
+plus periodic object-list servicing. Three-vertex batches can exceed that budget
+by at most two units. This avoids redundant polls at every tiny part boundary
+without coupling fixed simulation steps to drawn frames.
+
+Registered matrix meshes use GTE perspective projection when Q12 zoom is in
+(0,8192]. H is rounded to an integer focal length (`zoom * 600 / 4096`), so native
+pixel rounding can differ slightly from the CPU reference. Raw SZ3 is retained
+for depth ordering; overflow, near-plane, wide-coordinate and orthographic cases
+retain the CPU path. Simulation yields restore GTE transform state.
+
+Native direct meshes cache signed-short local GTE vertices and packed UV/page
+words in the existing twelve-byte-per-corner workspace, without enlarging the
+vertex pool. Mesh or projection-path changes invalidate local packing; texture
+page/atlas changes invalidate UV packing. Fully visible textured triangles emit
+the standard eight-word FT3 packet directly; clipped triangles retain the
+general path. The SDK backend emits explicit RTPS/RTPT command words because
+older INLINE_C.H variants contain incompatible pseudo-opcodes. Empty font
+queues skip FntFlush; queued text and loading boundaries retain flushing.
+
+Frame snapshots copy the scene prefix and active overlay commands/text,
+backdrops and rotation slots, plus the complete allocated object count. Unused
+capacity is not presentation state and is not copied. Shrinking/growing counts
+and source mutations are covered by the standalone snapshot tests.
+
 ### Small mesh transformation precision
 
 Mesh offsets retain eight fractional bits through scaling and XYZ rotations,
@@ -265,7 +303,7 @@ ordinary flags. Preserve upper bits when updating low flags on registered parts.
 No PsxObject field/layout is changed. Optional matrix rotations override Euler
 for mesh objects. Objects without a registered slot retain the old Euler path.
 
-The frame snapshot copies the entire inline bank by value; render lookups use
+The frame snapshot copies the active inline rotation slots by value; render lookups use
 the frozen scene, not live simulation pointers. Projection caches store/compare
 matrix values as well as object/camera state, so changing a rotation invalidates
 geometry while a translation-only update does not. Matrix binding/removal also

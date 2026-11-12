@@ -52,6 +52,15 @@ static int psx_gte_object_matrix(const short *camera,const short object[9],
     }
     return 1;
 }
+/* Camera-facing meshes have no local depth. Apply their X/Y scale directly
+ * in view space instead of undoing/reapplying the camera for every vertex. */
+static int psx_gte_billboard_matrix(const long scale[3],short *out)
+{
+    int i;
+    if(scale[0]<-32768L || scale[0]>32767L || scale[1]<-32767L || scale[1]>32768L) return 0;
+    for(i=0;i<9;i++) out[i]=0;
+    out[0]=(short)scale[0];out[4]=(short)-scale[1];return 1;
+}
 static void psx_transform_object_matrix(const PsxObject *object,const long local[3],
     const short matrix[9],long out[3])
 {
@@ -149,15 +158,18 @@ static int psx_depth_bucket(long depth,int limit)
     if(bucket>=limit-2) return limit-3;
     return (int)bucket;
 }
-static int psx_triangle_bucket(long points[3][3],int limit,int flags)
+static int psx_triangle_bucket_z(long z0,long z1,long z2,int limit,int flags)
 {
     long depth;
     if(flags&PSX_RENDER_BACKGROUND) return limit-1;
     if(flags&PSX_RENDER_DECAL) return limit-2;
     /* Preserve existing triangle bins when converting half-depth to camera units. */
-    depth=(points[0][2]+points[1][2]+points[2][2])/6;
+    depth=(z0+z1+z2)/6;
     return psx_depth_bucket(depth*2+600,limit);
 }
+
+static int psx_triangle_bucket(long points[3][3],int limit,int flags)
+{return psx_triangle_bucket_z(points[0][2],points[1][2],points[2][2],limit,flags);}
 
 /* Positive screen-space winding is the visible side of the inward-wound
  * example wall meshes. Bound products for a 32-bit PS1 long; wide projections
@@ -199,12 +211,20 @@ static unsigned int psx_screen_region(const long *point)
     return code;
 }
 
+/* Native GPU words: keep UV/page and XY packing unsigned and 32-bit bounded. */
+static unsigned long psx_gpu_uv_word(unsigned int u,unsigned int v,unsigned int page)
+{return (unsigned long)(u&255U)|((unsigned long)(v&255U)<<8)|((unsigned long)(page&65535U)<<16);}
+static unsigned long psx_gpu_xy_word(long x,long y)
+{return (unsigned long)(unsigned short)x|((unsigned long)(unsigned short)y<<16);}
+
 typedef struct PsxProjectionCache {
     long position[3],rotation[3],scale[3],camera[3],zoom;
     long radius;
     int yaw,pitch,projection,valid,kind,camera_eye,has_rotation;
     short matrix[9];
-    unsigned int start,count,outside;
+    unsigned int start,count,outside,inside;
+    int local_packed,uv_packed;
+    unsigned long packed_page;
     const PsxMesh *mesh;
 } PsxProjectionCache;
 

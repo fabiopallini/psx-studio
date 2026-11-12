@@ -6,16 +6,26 @@
 #include "render.h"
 #include <libcd.h>
 #include <libapi.h>
+#include <inline_c.h>
+/* Some DMPSX inline headers emit pseudo-op words (0x7f/0xbf), which this
+ * CCPSX/ASMPSX toolchain leaves unchanged. Emit actual COP2 RTPS/RTPT commands;
+ * retain the SDK's register load/store intrinsics and their delay slots. */
+#undef gte_rtps
+#undef gte_rtpt
+#define gte_rtps() __asm__ volatile ("nop;nop;.word 0x4a180001")
+#define gte_rtpt() __asm__ volatile ("nop;nop;.word 0x4a280030")
 #include <stdio.h>
 #include <string.h>
 
 /* PAL double buffering derived from the original psx.c; strict C89. */
+typedef char PsxFt3WordLayout[sizeof(POLY_FT3)==8*sizeof(unsigned long)?1:-1];
 static DISPENV display[2];
 static DRAWENV drawing[2];
 static unsigned long ordering[2][STUDIO_DRAW_LIMIT];
 static LINE_F2 lines[2][STUDIO_OBJECT_LIMIT][24];
 static union {
     POLY_FT3 textured;
+    unsigned long words[8];
     struct { POLY_F3 primitive; DR_TPAGE mode; } flat;
 } polygons[2][STUDIO_POLYGON_LIMIT];
 static unsigned long tim_buffer[34000];
@@ -25,10 +35,12 @@ static struct { SPRT sprite; DR_TPAGE mode; } background_tiles[2][2],depth_tiles
 static PsxProjectionCache cache[STUDIO_OBJECT_LIMIT];
 static unsigned short shared_vertices[12288];
 static unsigned short position_hash[PSX_POSITION_HASH_SIZE];
-static long world_vertices[12288][3]; /* Rotated/scaled offsets, without translation. */
+/* Reuse existing work memory for immutable packed locals on the direct GTE
+ * path, or rotated/scaled world offsets on the legacy path. No extra pool. */
+static union {long world[3];struct {SVECTOR local;unsigned long uv;} packed;} world_vertices[12288];
 static long projected_vertices[12288][3];
 static int buffer_index;
-static unsigned int polygon_count;
+static unsigned int polygon_count,render_credit;
 static PsxScene *current_scene;
 static PsxScene *simulation_scene;
 static PsxScene frame_scene;
@@ -42,12 +54,14 @@ static unsigned long snapshot_tick;
 static PsxTexture *textures;
 static unsigned int texture_count;
 static int font_enabled = 1;
+static int font_pending;
 static PsxFrameRate frame_rate;
 static PsxStepClock simulation_clock;
 static long camera_cy,camera_sy,camera_cp,camera_sp;
 static long object_cos[3],object_sin[3];
 static const short *object_matrix;
-static int object_gte_direct;
+static int object_gte_direct,object_gte_projection;
+static long gte_focal=-1;
 static int cached_yaw,cached_pitch,camera_angles_valid;
 unsigned long studio_pad;
 static volatile unsigned char controller_buffers[2][34];
@@ -80,13 +94,13 @@ static void poll_render(void)
     if(slot<0) return;
     PutDrawEnv(&drawing[slot]);
     DrawOTag(&ordering[slot][STUDIO_DRAW_LIMIT-1]);
-    if(font_enabled) FntFlush(0);
+    if(font_enabled && font_pending) {FntFlush(0);font_pending=0;}
 }
 
 void psInit(void)
 {
     int i;
-    ResetCallback(); ResetGraph(0); InitGeom(); SetDispMask(0);SetVideoMode(MODE_PAL);
+    ResetCallback(); ResetGraph(0); InitGeom();SetGeomOffset(160,128);gte_focal=-1; SetDispMask(0);SetVideoMode(MODE_PAL);
     memset((void *)controller_buffers,255,sizeof(controller_buffers));
     InitPAD((char *)controller_buffers[0],34,(char *)controller_buffers[1],34);
     StartPAD();ChangeClearPAD(0);
@@ -100,7 +114,7 @@ void psInit(void)
     psx_step_clock_reset(&simulation_clock,(unsigned long)VSync(-1));
     psx_frame_init(&frames);sampled_frames=0;simulation_scene=0;input_wait=0;snapshot_valid=0;
     FntLoad(960,256);FntOpen(8,8,304,224,0,512);SetDumpFnt(0);buffer_index=0;
-    psAudioInit();
+    font_pending=0;psAudioInit();
     VSyncCallback(display_vblank);
 }
 
@@ -113,7 +127,7 @@ void psShowLoading(const char *message)
     DrawSync(0);psx_frame_discard(&frames);rendering=0;snapshot_valid=0;
     slot=1-frames.front;loading=drawing[slot];setRGB0(&loading,0,0,0);
     PutDrawEnv(&loading);
-    if(font_enabled) FntFlush(0); /* Discard text queued by a canceled frame. */
+    if(font_enabled) FntFlush(0);font_pending=0; /* Discard text queued by a canceled frame. */
     DrawSync(0);PutDrawEnv(&loading);
     if(font_enabled && message && *message) {
         FntPrint("\n\n\n\n\n      %s",message);FntFlush(0);
@@ -137,7 +151,7 @@ int psSetScene(PsxScene *scene,PsxTexture *images,unsigned int count)
     /* Drop any debug text belonging to a canceled queued frame. Flush it to
      * the hidden buffer so the new Scene starts with an empty font stream. */
     PutDrawEnv(&drawing[1-frames.front]);
-    if(font_enabled) FntFlush(0);
+    if(font_enabled) FntFlush(0);font_pending=0;
     DrawSync(0);
     sampled_frames=frames.count;
     frame_scene=*scene;frame_scene.objects=frame_objects;current_scene=&frame_scene;
@@ -145,7 +159,7 @@ int psSetScene(PsxScene *scene,PsxTexture *images,unsigned int count)
     if(scene->count>STUDIO_OBJECT_LIMIT) return 0;
     start=0;
     for(i=0;i<scene->count && i<STUDIO_OBJECT_LIMIT;i++) {
-        cache[i].valid=0;cache[i].mesh=scene->objects[i].mesh;cache[i].start=start;cache[i].count=scene->objects[i].mesh?scene->objects[i].mesh->count:0;
+        cache[i].valid=0;cache[i].local_packed=0;cache[i].mesh=scene->objects[i].mesh;cache[i].start=start;cache[i].count=scene->objects[i].mesh?scene->objects[i].mesh->count:0;
         if(cache[i].count>12288-start) return 0;
         if(scene->objects[i].mesh) psx_share_positions(scene->objects[i].mesh,shared_vertices,start,position_hash);
         cache[i].radius=scene->objects[i].mesh?psx_mesh_radius(scene->objects[i].mesh):0;
@@ -207,6 +221,7 @@ int psUpdate(void)
         psx_scene_update(simulation_scene,studio_pad);
         if(simulation_scene->pending_scene) break;
     }
+    if(steps) gte_focal=-1; /* A callback may have changed GTE projection state. */
     return steps!=0;
 }
 int psFontEnabled(void) { return font_enabled; }
@@ -218,7 +233,8 @@ int psBeginFrame(void)
     if(simulation_scene && simulation_scene->prepare_overlay) simulation_scene->prepare_overlay(simulation_scene);
     if(simulation_scene) psx_frame_snapshot(&frame_scene,frame_objects,simulation_scene);
     snapshot_valid=1;snapshot_tick=simulation_clock.tick;
-    rendering=1;polygon_count=0;ClearOTagR(ordering[buffer_index],STUDIO_DRAW_LIMIT);return 1;
+    rendering=1;polygon_count=0;render_credit=16;ClearOTagR(ordering[buffer_index],STUDIO_DRAW_LIMIT);
+    return 1;
 }
 /* Q12 coefficients: handle identity/zero without multiply or divide. */
 static long fixed_mul(long a,long b)
@@ -271,8 +287,20 @@ static void prepare_gte(const PsxObject *object)
     int i;
     long view[3];
     psx_camera_rotation_fixed(camera_cy,camera_sy,camera_cp,camera_sp,matrix.m);
-    object_gte_direct=object_matrix && object->kind!=PSX_OBJECT_BILLBOARD &&
-        psx_gte_object_matrix(&matrix.m[0][0],object_matrix,object->scale,combined);
+    object_gte_direct=object->kind==PSX_OBJECT_BILLBOARD?
+        psx_gte_billboard_matrix(object->scale,combined):
+        object_matrix && psx_gte_object_matrix(&matrix.m[0][0],object_matrix,object->scale,combined);
+    object_gte_projection=object_gte_direct && current_scene && current_scene->projection==PSX_PROJECTION_PERSPECTIVE &&
+        current_scene->zoom>0 && current_scene->zoom<=8192;
+    if(object_gte_projection) {
+        long focal;
+        /* GTE H is an integer focal length. The CPU reference retains Q12
+         * zoom for exceptional/near-plane vertices; normal projection uses
+         * the hardware divider and its native subpixel arithmetic. */
+        focal=(current_scene->zoom*600+2048)/4096;
+        if(focal<1) object_gte_projection=0;
+        else if(focal!=gte_focal) {SetGeomScreen(focal);gte_focal=focal;}
+    }
     if(object_gte_direct) for(i=0;i<9;i++) matrix.m[i/3][i%3]=combined[i];
     project(object->position,view);
     matrix.t[0]=view[0];matrix.t[1]=view[1];matrix.t[2]=view[2];
@@ -307,6 +335,62 @@ static void project_local_matrix(const PsxObject *object,const long *local,long 
         if(!((unsigned long)flag&0x80000000UL)) {view[0]=output.vx;view[1]=output.vy;view[2]=output.vz;return;}
     }
     transform(object,local,world);project(world,view);
+}
+/* Hardware perspective for ordinary articulated vertices. SZ3 retains full
+ * integer depth (the RotTransPers return value itself is divided by four).
+ * Overflow, near-plane and wide-coordinate cases retain the CPU clip path. */
+static int project_packed_screen(const SVECTOR *input,long *screen)
+{
+    long packed,flag,depth;
+    if(!object_gte_projection) return 0;
+    gte_ldv0(input);gte_rtps();
+    gte_stsxy(&packed);gte_stsz(&depth);gte_stflg(&flag);
+    if((unsigned long)flag&0x80000000UL) return 0;
+    if(depth<PSX_CAMERA_NEAR) return 0;
+    screen[0]=(short)(packed&65535L);screen[1]=(short)((unsigned long)packed>>16);
+    screen[2]=depth-PSX_CAMERA_DISTANCE;return 1;
+}
+static int project_local_screen(const long *local,long *screen)
+{
+    SVECTOR input;
+    if(!object_gte_projection || !psx_gte_offset_fits(local)) return 0;
+    input.vx=(short)local[0];input.vy=(short)local[1];input.vz=(short)local[2];input.pad=0;
+    return project_packed_screen(&input,screen);
+}
+static int project_packed_screen3(const SVECTOR *a,const SVECTOR *b,const SVECTOR *c,long screen[3][3])
+{
+    long packed[3],depth[3],flag;
+    int i;
+    gte_ldv3(a,b,c);gte_rtpt();
+    gte_stsxy3c(packed);gte_stsz3c(depth);gte_stflg(&flag);
+    if((unsigned long)flag&0x80000000UL) return 0;
+    for(i=0;i<3;i++) if(depth[i]<PSX_CAMERA_NEAR) return 0;
+    for(i=0;i<3;i++) {
+        screen[i][0]=(short)(packed[i]&65535L);screen[i][1]=(short)((unsigned long)packed[i]>>16);
+        screen[i][2]=depth[i]-PSX_CAMERA_DISTANCE;
+    }
+    return 1;
+}
+static void pack_local_vertices(PsxProjectionCache *cache,const PsxMesh *mesh)
+{
+    unsigned int i,slot;
+    const long *local;
+    /* Validate before writing the union. Wide meshes keep the bounded fallback. */
+    for(i=0;i<mesh->count;i++) if(!psx_gte_offset_fits(mesh->vertices[i].p)) return;
+    for(i=0;i<mesh->count;i++) {
+        slot=cache->start+i;if(shared_vertices[slot]!=slot) continue;
+        local=mesh->vertices[i].p;
+        world_vertices[slot].packed.local.vx=(short)local[0];world_vertices[slot].packed.local.vy=(short)local[1];
+        world_vertices[slot].packed.local.vz=(short)local[2];world_vertices[slot].packed.local.pad=0;
+    }
+    cache->local_packed=1;cache->uv_packed=0;
+}
+static void pack_vertex_uv(PsxProjectionCache *cache,const PsxMesh *mesh,const PsxTexture *texture)
+{
+    unsigned int i;
+    for(i=0;i<mesh->count;i++) world_vertices[cache->start+i].packed.uv=
+        psx_gpu_uv_word(mesh->vertices[i].uv[0]+texture->u,mesh->vertices[i].uv[1]+texture->v,i%3==1?texture->tpage:0);
+    cache->packed_page=psx_gpu_uv_word(texture->u,texture->v,texture->tpage);cache->uv_packed=1;
 }
 static int screen_project(const long *view,long *screen)
 {
@@ -350,6 +434,38 @@ static void emit_triangle(long points[3][3],unsigned char uv[3][2],PsxTexture *t
         }
     }
 }
+/* Fully visible textured triangles need no temporary point/UV arrays. Keep
+ * the common rigid-part path to pointer reads and one native GPU packet. */
+static void emit_visible_textured(const long *a,const long *b,const long *c,
+    const PsxVertex *corners,PsxTexture *texture,int flags)
+{
+    POLY_FT3 *ft;
+    int bucket;
+    if(polygon_count>=STUDIO_POLYGON_LIMIT) return;
+    bucket=psx_triangle_bucket_z(a[2],b[2],c[2],STUDIO_DRAW_LIMIT,flags);
+    ft=&polygons[buffer_index][polygon_count++].textured;setPolyFT3(ft);
+    if(flags&PSX_RENDER_EMISSIVE) setRGB0(ft,192,192,192);else setRGB0(ft,128,128,128);
+    setXY3(ft,(short)a[0],(short)a[1],(short)b[0],(short)b[1],(short)c[0],(short)c[1]);
+    setUV3(ft,corners[0].uv[0]+texture->u,corners[0].uv[1]+texture->v,
+        corners[1].uv[0]+texture->u,corners[1].uv[1]+texture->v,
+        corners[2].uv[0]+texture->u,corners[2].uv[1]+texture->v);
+    ft->tpage=texture->tpage;addPrim(&ordering[buffer_index][bucket],ft);
+}
+/* Same FT3 hardware layout as POLY_FT3, with immutable UV/page words cached
+ * alongside packed locals. The union remains the original 12 bytes per slot. */
+static void emit_packed_textured(const long *a,const long *b,const long *c,unsigned int corner,int flags)
+{
+    unsigned long *packet;
+    int bucket;
+    if(polygon_count>=STUDIO_POLYGON_LIMIT) return;
+    bucket=psx_triangle_bucket_z(a[2],b[2],c[2],STUDIO_DRAW_LIMIT,flags);
+    packet=polygons[buffer_index][polygon_count++].words;
+    packet[0]=0x07000000UL;packet[1]=flags&PSX_RENDER_EMISSIVE?0x24c0c0c0UL:0x24808080UL;
+    packet[2]=psx_gpu_xy_word(a[0],a[1]);packet[3]=world_vertices[corner].packed.uv;
+    packet[4]=psx_gpu_xy_word(b[0],b[1]);packet[5]=world_vertices[corner+1].packed.uv;
+    packet[6]=psx_gpu_xy_word(c[0],c[1]);packet[7]=world_vertices[corner+2].packed.uv;
+    addPrim(&ordering[buffer_index][bucket],packet);
+}
 static void draw_mesh(const PsxObject *object,unsigned int index)
 {
     unsigned int i;
@@ -368,9 +484,11 @@ static void draw_mesh(const PsxObject *object,unsigned int index)
     PsxProjectionCache *c;
     int shape_dirty;
     int gte_ready;
-    unsigned int common,region,edges;
+    unsigned int common,region,edges,mesh_edges;
     int has_near;
-    unsigned int slot,source,unique;
+    unsigned int slot,source,indices[3];
+    int batch_count;
+    long batch[3][3];
     PsxTexture *texture;
     c=&cache[index];gte_ready=0;
     if(object->mesh->count>c->count) return;
@@ -389,7 +507,7 @@ static void draw_mesh(const PsxObject *object,unsigned int index)
                 psx_share_positions(object->mesh,shared_vertices,c->start,position_hash);
                 c->radius=psx_mesh_radius(object->mesh);
             }
-            c->mesh=object->mesh;c->valid=0;
+            c->mesh=object->mesh;c->valid=0;c->local_packed=0;
         }
         if(object->mesh->count>=96) {
             scale=0;
@@ -406,36 +524,94 @@ static void draw_mesh(const PsxObject *object,unsigned int index)
             }
         }
         prepare_gte(object);gte_ready=1;
-        common=15U;has_near=0;unique=0;
+        if(object_gte_direct) {if(!c->local_packed) pack_local_vertices(c,object->mesh);}
+        else c->local_packed=0;
+        common=15U;mesh_edges=0;has_near=0;
         for(i=0;i<object->mesh->count;i++) {
             slot=c->start+i;
             if(shared_vertices[slot]!=slot) continue;
-            if(!(unique++&15U) && psUpdate()) {
-                if(simulation_scene->pending_scene) return;
-                prepare_gte(object);
-            }
-            if(object_gte_direct) project_local_matrix(object,object->mesh->vertices[i].p,projected);
-            else {
-                if(shape_dirty || object_matrix) {
-                    transform(object,object->mesh->vertices[i].p,world);
-                    for(k=0;k<3;k++) world_vertices[slot][k]=world[k]-object->position[k];
+            /* Share a bounded work budget across small rigid parts, rather
+             * than polling clock/GPU/input three times at each part boundary. */
+            if(!render_credit) {
+                render_credit=16;
+                if(psUpdate()) {
+                    if(simulation_scene->pending_scene) return;
+                    prepare_gte(object);
                 }
-                project_offset(object,world_vertices[slot],projected);
             }
-            screen_project(projected,projected);
+            render_credit--;
+            if(object_gte_projection && c->local_packed) {
+                batch_count=0;
+                for(source=i;source<object->mesh->count && batch_count<3;source++) {
+                    if(shared_vertices[c->start+source]!=c->start+source) continue;
+                    indices[batch_count++]=source;
+                }
+                if(batch_count==3 && project_packed_screen3(&world_vertices[c->start+indices[0]].packed.local,
+                    &world_vertices[c->start+indices[1]].packed.local,&world_vertices[c->start+indices[2]].packed.local,batch)) {
+                    for(j=0;j<3;j++) {
+                        slot=c->start+indices[j];
+                        for(k=0;k<3;k++) projected_vertices[slot][k]=batch[j][k];
+                        region=psx_screen_region(batch[j]);common&=region;mesh_edges|=region;
+                    }
+                    render_credit=render_credit>2?render_credit-2:0;i=source-1;continue;
+                }
+            }
+            if(!(c->local_packed?project_packed_screen(&world_vertices[slot].packed.local,projected):
+                project_local_screen(object->mesh->vertices[i].p,projected))) {
+                if(object_gte_direct) project_local_matrix(object,object->mesh->vertices[i].p,projected);
+                else {
+                    if(shape_dirty || object_matrix) {
+                        transform(object,object->mesh->vertices[i].p,world);
+                        for(k=0;k<3;k++) world_vertices[slot].world[k]=world[k]-object->position[k];
+                    }
+                    project_offset(object,world_vertices[slot].world,projected);
+                }
+                screen_project(projected,projected);
+            }
             for(k=0;k<3;k++) projected_vertices[slot][k]=projected[k];
-            common&=psx_screen_region(projected);
+            region=psx_screen_region(projected);common&=region;mesh_edges|=region;
             if(current_scene->projection && projected[2]<PSX_CAMERA_NEAR-PSX_CAMERA_DISTANCE) has_near=1;
         }
-        c->outside=has_near?0:common;
+        c->outside=has_near?0:common;c->inside=!has_near && !mesh_edges;
         psx_projection_snapshot(c,object,current_scene);
     }
     if(c->outside) return;
     texture=object->mesh->texture>=0 && (unsigned int)object->mesh->texture<texture_count?&textures[object->mesh->texture]:0;
+    if(texture && c->local_packed && (!c->uv_packed || c->packed_page!=psx_gpu_uv_word(texture->u,texture->v,texture->tpage)))
+        pack_vertex_uv(c,object->mesh,texture);
     for(i=0;i+2<object->mesh->count;i+=3) {
-        if(!(i%48U) && psUpdate()) {
-            if(simulation_scene->pending_scene) return;
-            gte_ready=0;
+        if(!render_credit) {
+            render_credit=16;
+            if(psUpdate()) {
+                if(simulation_scene->pending_scene) return;
+                gte_ready=0;
+            }
+        }
+        render_credit--;
+        /* All projected positions are on screen and in front of the near
+         * plane: every triangle is GPU-safe. Skip repeated region/span tests.
+         * The cache is invalidated by any object/camera/matrix change. */
+        if(c->inside) {
+            long ax,ay,bx,by;
+            const long *p0,*p1,*p2;
+            p0=projected_vertices[shared_vertices[c->start+i]];
+            p1=projected_vertices[shared_vertices[c->start+i+1]];
+            p2=projected_vertices[shared_vertices[c->start+i+2]];
+            if(object->render_flags&PSX_RENDER_CULL_BACKFACES) {
+                ax=p1[0]-p0[0];ay=p1[1]-p0[1];bx=p2[0]-p0[0];by=p2[1]-p0[1];
+                if(ax*by-ay*bx<=0) continue;
+            }
+            if(texture && c->local_packed) {
+                emit_packed_textured(p0,p1,p2,c->start+i,object->render_flags);continue;
+            }
+            if(texture) {
+                emit_visible_textured(p0,p1,p2,&object->mesh->vertices[i],texture,object->render_flags);continue;
+            }
+            for(k=0;k<3;k++) {triangle[0][k]=p0[k];triangle[1][k]=p1[k];triangle[2][k]=p2[k];}
+            for(j=0;j<3;j++) {
+                uv[j][0]=object->mesh->vertices[i+j].uv[0];uv[j][1]=object->mesh->vertices[i+j].uv[1];
+            }
+            emit_triangle(triangle,uv,texture,object->render_flags);continue;
         }
         inside=1;near_clip=0;common=15U;edges=0;
         for(j=0;j<3;j++) {
@@ -455,7 +631,8 @@ static void draw_mesh(const PsxObject *object,unsigned int index)
         if(near_clip) {
             if(!gte_ready) {prepare_gte(object);gte_ready=1;}
             for(j=0;j<3;j++) {
-                project_offset(object,world_vertices[shared_vertices[c->start+i+j]],a[j]);
+                if(object_gte_direct) project_local_matrix(object,object->mesh->vertices[i+j].p,a[j]);
+                else project_offset(object,world_vertices[shared_vertices[c->start+i+j]].world,a[j]);
             }
             count=psx_camera_clip_polygon_fixed(a,3,b,2,(long)PSX_CAMERA_NEAR,1);
             for(j=0;j<count;j++) {
@@ -547,7 +724,7 @@ const PsxScene *psDrawScene(void)
 {
     unsigned int i;
     for(i=0;i<frame_scene.count;i++) {
-        psUpdate();
+        if(!(i&3U)) psUpdate();
         if(simulation_scene && simulation_scene->pending_scene) break;
         psDrawObject(&frame_objects[i],i);
     }
@@ -587,7 +764,7 @@ void psDrawOverlay(void)
             quad->tpage=texture->tpage;addPrim(&ordering[buffer_index][0],quad);
         }
     }
-    if(psFontEnabled() && current_scene->overlay.text[0]) FntPrint("%s",current_scene->overlay.text);
+    if(psFontEnabled() && current_scene->overlay.text[0]) {FntPrint("%s",current_scene->overlay.text);font_pending=1;}
 }
 /* Insert at the same depth convention as ordinary triangles. Higher camera
  * depth draws first. Reverse equal-depth layers so list order is compositing order. */
