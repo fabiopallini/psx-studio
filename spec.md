@@ -27,8 +27,8 @@
   SDK and emulator; Studio locates its bundled psx-lib automatically. Ignore old
   engine_path project settings. The CLI --engine override is for development.
   PSX Lib resolves dosbox-x from PATH. Do not hardcode machine paths or commit
-  credentials, SDKs, generated output or BIOS. Preserve the current output paths:
-  `build/engine/ps1/NAME-HASH/` and `build/studio-projects/NAME-HASH/source/`.
+  credentials, SDKs, generated output or BIOS. Preserve the output layout documented
+  in [architecture](spec/architecture.md).
 - `examples/` is ignored and distributed separately through GitHub Releases.
   It is not required to compile or run the editor. Keep generic tests independent
   of example assets; example integration tests must skip when unavailable.
@@ -41,11 +41,8 @@
 - `make` builds framework and editor; `make studio` / `make lib` build either.
   `make -C psx-lib` and `make -C psx-lib test` must work independently, without
   GTK or the parent project. Framework tests use self-contained fixtures and
-  never discover sibling games/editors. `make test` runs both suites;
-  `make test-studio` / `make test-lib` run them separately.
-- On Linux, use `./build/psx-studio` to launch. On Windows,
-  use `.\build.ps1` with MSYS2 UCRT64; the distributable folder is
-  `build/windows/psx-studio/`. Keep its libraries and resources together.
+  never discover sibling games/editors. See README for launch commands, separate
+  test targets and Windows setup/packaging; keep packaged libraries/resources together.
 - Use `make test` on Linux or `.\build.ps1 test` on Windows for host tests;
   these include Python pipeline tests. Run checks appropriate to the change and
   report unavailable dependencies, skipped checks and failures explicitly.
@@ -109,10 +106,10 @@
   unset `WAYLAND_DISPLAY`/`WAYLAND_SOCKET`, set `GDK_BACKEND=x11` and
   `SDL_VIDEODRIVER=x11`; Xvfb alone does not stop SDL from selecting the real
   Wayland desktop. Stop test processes when verification is finished.
-- For headless DOSBox Staging checks, use a temporary configuration with
-  `output=texture` and `texture_renderer=software`, without the user's primary
-  configuration. Deprecated `output=surface` can fall back to OpenGL and fail
-  under Xvfb.
+- Use DOSBox-X from PATH with an isolated temporary configuration, following the
+  [framework build profile](spec/framework.md#dosbox-x-build-profile). Preserve its
+  `-defaultconf` isolation; do not load or modify the user's primary configuration
+  or substitute another DOSBox variant.
 - On Windows, use a dedicated test VM/session for automated GUI checks; Xvfb
   instructions apply only to Linux. Avoid interfering with the user's desktop
   and clean up processes started for verification on either platform.
